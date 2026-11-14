@@ -1,16 +1,34 @@
 //! DANload - titik masuk aplikasi.
 //!
-//! Fase 1: hanya membuka jendela dengan kerangka tampilan.
-//! Logika unduh, pustaka, dan pengaturan ditambahkan di fase berikutnya.
+//! Pembagian modul:
+//! - `app`    : penghubung tampilan (Slint) dengan logika
+//! - `config` : pengaturan yang disimpan di config.json
+//! - `deps`   : mencari yt-dlp, FFmpeg, dan ffprobe
 
 // Di build rilis, jangan munculkan jendela console hitam di belakang aplikasi.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app;
+mod config;
+mod deps;
+
 // Memasukkan kode Rust hasil kompilasi file `.slint` (dibuat oleh build.rs).
-// Dari sinilah tipe `AppWindow` berasal.
+// Dari sinilah tipe `AppWindow`, `ComponentInfo`, dan `ComponentState` berasal.
 slint::include_modules!();
 
-fn main() -> Result<(), slint::PlatformError> {
+fn main() {
+    if let Err(error) = run() {
+        // Build rilis tidak punya console, jadi error ditampilkan lewat kotak pesan.
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("DANload")
+            .set_description(format!("DANload tidak bisa dibuka.\n\n{error}"))
+            .show();
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), slint::PlatformError> {
     // Paksa memakai software renderer (menggambar dengan CPU, tanpa GPU),
     // supaya RAM tetap kecil. Lihat CLAUDE.md Bagian 2.6.
     slint::BackendSelector::new()
@@ -18,11 +36,9 @@ fn main() -> Result<(), slint::PlatformError> {
         .renderer_name("software".into())
         .select()?;
 
-    let app = AppWindow::new()?;
-
-    // Nomor versi diambil dari Cargo.toml, jadi cukup diubah di satu tempat.
-    app.set_app_version(env!("CARGO_PKG_VERSION").into());
+    let window = AppWindow::new()?;
+    app::setup(&window);
 
     // Menampilkan jendela dan menjalankan event loop sampai jendela ditutup.
-    app.run()
+    window.run()
 }

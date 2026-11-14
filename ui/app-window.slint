@@ -1,4 +1,4 @@
-// Jendela utama DANload (Fase 1: kerangka tampilan, isi masih placeholder).
+// Jendela utama DANload (Fase 2A: kerangka tampilan + halaman Pengaturan).
 //
 // Tata letak mengikuti CLAUDE.md Bagian 2.7:
 //   bar atas  : nama aplikasi, kolom cari, penanda platform
@@ -15,6 +15,10 @@ import {
     Icon, Panel, NavButton, Chip, PlatformBadge, InputField,
     PrimaryButton, GhostButton, Segmented, FieldLabel, ValueRow
 } from "components.slint";
+import { SettingsPage, ComponentInfo, ComponentState } from "settings-page.slint";
+
+// Diekspor supaya tipe ini bisa dipakai dari Rust (src/app.rs).
+export { ComponentInfo, ComponentState }
 
 export component AppWindow inherits Window {
     // Diisi dari Rust (src/main.rs) memakai versi di Cargo.toml.
@@ -28,6 +32,23 @@ export component AppWindow inherits Window {
     in-out property <int> download-mode: 0;
     // URL yang diketik atau ditempel pengguna.
     in-out property <string> url <=> url-field.text;
+
+    // ----- Diisi dari Rust (src/app.rs) -----
+    // Status tiap komponen (yt-dlp, FFmpeg, ffprobe).
+    in property <[ComponentInfo]> components;
+    // `true` selama pemeriksaan komponen masih berjalan.
+    in property <bool> checking-components;
+    // `true` jika semua komponen siap dipakai.
+    in property <bool> components-ready;
+    // Folder tujuan unduhan yang sedang berlaku.
+    in property <string> download-folder;
+    // Pesan masalah untuk status bar (kosong = tidak ada masalah).
+    in property <string> notice;
+
+    // ----- Ditangani di Rust (src/app.rs) -----
+    callback recheck-components();
+    callback choose-download-folder();
+    callback download-mode-changed(index: int);
 
     property <[{ title: string, empty-title: string, empty-hint: string, icon: string }]> pages: [
         {
@@ -50,8 +71,8 @@ export component AppWindow inherits Window {
         },
         {
             title: "Pengaturan",
-            empty-title: "Pengaturan belum tersedia",
-            empty-hint: "Folder unduhan serta komponen yt-dlp dan FFmpeg akan diatur di sini.",
+            empty-title: "",
+            empty-hint: "",
             icon: Icons.settings,
         },
     ];
@@ -184,6 +205,7 @@ export component AppWindow inherits Window {
                         icon: Icons.settings;
                         label: "Pengaturan";
                         active: root.current-page == 3;
+                        alert: !root.checking-components && !root.components-ready;
                         clicked => {
                             root.current-page = 3;
                         }
@@ -219,8 +241,22 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    if root.current-page == 3: SettingsPage {
+                        vertical-stretch: 1;
+                        components: root.components;
+                        checking: root.checking-components;
+                        ready: root.components-ready;
+                        download-folder: root.download-folder;
+                        recheck-components => {
+                            root.recheck-components();
+                        }
+                        choose-download-folder => {
+                            root.choose-download-folder();
+                        }
+                    }
+
                     // Keadaan kosong (belum ada data)
-                    Rectangle {
+                    if root.current-page != 3: Rectangle {
                         vertical-stretch: 1;
 
                         VerticalLayout {
@@ -310,6 +346,9 @@ export component AppWindow inherits Window {
                             first: "Video";
                             second: "Audio";
                             selected-index <=> root.download-mode;
+                            selected(index) => {
+                                root.download-mode-changed(index);
+                            }
                         }
                     }
 
@@ -348,7 +387,11 @@ export component AppWindow inherits Window {
 
                         ValueRow {
                             icon: Icons.folder;
-                            text: "Belum diatur";
+                            text: root.download-folder;
+                            clickable: true;
+                            clicked => {
+                                root.choose-download-folder();
+                            }
                         }
                     }
 
@@ -363,7 +406,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: "Tombol Unduh, pilihan format, dan folder belum aktif. Fitur ini dikerjakan di fase berikutnya.";
+                        text: "Tombol Unduh dan pilihan format belum aktif. Fitur ini dikerjakan di fase berikutnya.";
                         font-size: 11px;
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -381,10 +424,11 @@ export component AppWindow inherits Window {
 
             Text {
                 horizontal-stretch: 1;
-                text: "Siap.";
+                text: root.notice != "" ? root.notice : root.checking-components ? "Memeriksa komponen..." : root.components-ready ? "Siap." : "Komponen belum lengkap. Buka Pengaturan untuk melihat detailnya.";
                 font-size: 12px;
-                color: Theme.text-muted;
+                color: root.notice != "" ? Theme.error : root.checking-components || root.components-ready ? Theme.text-muted : Theme.warning;
                 vertical-alignment: center;
+                overflow: elide;
             }
 
             Text {

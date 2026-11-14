@@ -4,6 +4,7 @@ Ringkasan semua perubahan projek. Detail tiap perubahan ada di folder `changes/`
 
 | Tanggal | Perubahan | Detail |
 |---------|-----------|--------|
+| 2026-11-14 | Fase 2A: config, cek komponen, halaman Pengaturan | [changes/2026-11-14_fase-2a-config-dan-cek-komponen.md](changes/2026-11-14_fase-2a-config-dan-cek-komponen.md) |
 | 2026-11-14 | Fase 1: setup Cargo + Slint dan kerangka UI | [changes/2026-11-14_setup-cargo-dan-kerangka-ui.md](changes/2026-11-14_setup-cargo-dan-kerangka-ui.md) |
 | 2026-11-14 | Ganti nama folder ke DANload, Inno Setup, lingkungan pengembangan | [changes/2026-11-14_rename-folder-inno-setup-dan-lingkungan.md](changes/2026-11-14_rename-folder-inno-setup-dan-lingkungan.md) |
 | 2026-11-14 | Keputusan Fase 0 + rancangan installer & wizard setup | [changes/2026-11-14_keputusan-fase0-dan-wizard-setup.md](changes/2026-11-14_keputusan-fase0-dan-wizard-setup.md) |

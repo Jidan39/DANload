@@ -3,7 +3,7 @@
 Aplikasi Windows untuk mengunduh video dan audio dari YouTube, Facebook, dan Instagram.
 Ditulis dengan Rust + Slint; mesin unduhnya yt-dlp dan FFmpeg.
 
-Status: **Fase 1** (kerangka tampilan). Fitur unduh belum aktif.
+Status: **Fase 2A** (kerangka tampilan, pengaturan, cek komponen). Fitur unduh belum aktif.
 Aturan kerja dan rencana lengkap ada di [CLAUDE.md](CLAUDE.md); riwayat perubahan di [CHANGELOG.md](CHANGELOG.md).
 
 ## Kebutuhan
@@ -20,6 +20,12 @@ cargo run
 
 Build pertama memakan waktu beberapa menit karena semua library dikompilasi dari awal.
 Build berikutnya jauh lebih cepat.
+
+## Menjalankan test
+
+```
+cargo test
+```
 
 ## Build rilis
 
@@ -41,7 +47,11 @@ Hasilnya ada di `target\release\danload.exe`.
 | Lokasi | Isi |
 |--------|-----|
 | `src/main.rs` | Titik masuk aplikasi |
+| `src/app.rs` | Penghubung tampilan (Slint) dengan logika |
+| `src/config.rs` | Pengaturan (`%APPDATA%\DANload\config.json`) |
+| `src/deps.rs` | Mencari yt-dlp, FFmpeg, ffprobe dan membaca versinya |
 | `ui/app-window.slint` | Jendela utama |
+| `ui/settings-page.slint` | Halaman Pengaturan |
 | `ui/components.slint` | Komponen kecil (tombol, chip, kolom isian) |
 | `ui/theme.slint` | Warna, ukuran, dan bentuk ikon |
 | `build.rs` | Mengompilasi `.slint` dan menempelkan ikon ke `.exe` |

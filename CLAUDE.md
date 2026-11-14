@@ -101,10 +101,12 @@ Catatan: format yang butuh **re-encode** (AVI, MPEG, kadang MOV) harus diberi pe
 | GUI | **Slint 1.18** dengan **software renderer** (tanpa GPU); fitur: `std`, `compat-1-2`, `backend-winit`, `renderer-software`, `software-renderer-path`. Cadangan: `egui` jika Slint gagal memenuhi target | ✅ Ditetapkan |
 | Ikon .exe | `winresource` (hanya saat build) | ✅ Ditetapkan |
 | Async/proses | `std::thread` + channel (**tanpa tokio**) | ✅ Ditetapkan |
-| Config | `serde` + `serde_json` | ✅ Disarankan |
+| Config | `serde` + `serde_json` | ✅ Ditetapkan |
+| Dialog bawaan Windows (pilih folder, kotak pesan) | `rfd` | ✅ Ditetapkan |
 | Data pustaka/riwayat | File **JSON** (`serde_json`) di `%APPDATA%\DANload\` | ✅ Ditetapkan |
 | Lokasi yt-dlp/FFmpeg | `%LOCALAPPDATA%\DANload\bin\` → folder `bin\` di samping `DANload.exe` → `PATH` (urutan pencarian) | ✅ Ditetapkan |
-| Unduh komponen (wizard) | HTTP client ringan & blocking (kandidat: `ureq`) + ekstrak zip (kandidat: `zip`) | ⏳ Minta persetujuan saat ditambahkan |
+| Unduh komponen (wizard) | `ureq` (HTTP, blocking) + `sha2` (checksum) + `zip` (ekstrak) | ✅ Disetujui, ditambahkan di Fase 2B |
+| Sumber FFmpeg | Utama: **gyan.dev essentials `.zip`** (±88 MB, ada `.sha256`). Cadangan: **BtbN** GPL static `.zip` (±163 MiB). Keduanya ditautkan dari ffmpeg.org | ✅ Ditetapkan |
 | Installer | **Inno Setup** | ✅ Ditetapkan |
 | Hapus file | Pindah ke **Recycle Bin** (mis. crate `trash`), bukan hapus permanen | ✅ Disarankan |
 | Error handling | `anyhow` / `thiserror` | ✅ Disarankan |
@@ -214,6 +216,7 @@ Aturan wizard:
 - Tangani kondisi: tidak ada internet, unduhan terputus (bisa coba lagi), ruang disk tidak cukup, antivirus memblokir file.
 - Ganti folder unduhan **tidak** memindahkan file lama; Pustaka tetap menyimpan lokasi asli setiap file.
 - Lisensi: FFmpeg dan yt-dlp diunduh dari sumber resminya oleh pengguna sendiri (tidak dibundel di installer). Cantumkan nama & lisensi keduanya di halaman "Tentang".
+- **Pertanyaan terbuka (putuskan di Fase 3):** dokumentasi yt-dlp sangat menganjurkan *runtime* JavaScript (kemungkinan Deno) di samping ffmpeg/ffprobe, terutama untuk YouTube. Wizard dibuat berbasis daftar komponen supaya komponen ketiga bisa ditambah dengan mudah. *(Belum diverifikasi dengan unduhan nyata.)*
 
 ---
 
@@ -282,6 +285,7 @@ Selain file di `changes/`, tambahkan **satu baris** ke `CHANGELOG.md` di root pr
 
 - Build, menjalankan aplikasi, dan pengukuran RAM/CPU dilakukan **di Windows pemilik projek**. Jika Claude tidak bisa menjalankan perintah langsung di Windows, Claude memberikan perintah yang harus dijalankan beserta hasil yang diharapkan, lalu pemilik projek melaporkan hasilnya.
 - Sebelum Fase 1, pastikan `rustc --version` dan `cargo --version` sudah bisa dijalankan di terminal.
+- Projek memakai git dengan remote di GitHub milik pemilik projek. `git commit` dan `git push` dijalankan oleh pemilik projek (atau oleh Claude hanya dengan izin, lihat Bagian 1).
 
 ---
 
@@ -342,17 +346,18 @@ DANload/                 ← D:\Code Project\DANload
 │   └── icon.png         ← ikon jendela/taskbar (dibuat dari icon.ico)
 ├── ui/
 │   ├── app-window.slint ← jendela utama
+│   ├── settings-page.slint ← halaman Pengaturan (status komponen, folder unduhan)
 │   ├── components.slint ← komponen kecil (tombol, chip, kolom isian)
 │   └── theme.slint      ← warna, ukuran, bentuk ikon
 ├── src/
 │   ├── main.rs          ← titik masuk aplikasi
-│   ├── app.rs           ← state GUI & penghubung ke Slint (belum dibuat; mulai Fase 2)
+│   ├── app.rs           ← penghubung Slint ↔ logika (callback, thread pekerja)
 │   ├── downloader.rs    ← memanggil yt-dlp, membaca progress
 │   ├── formats.rs       ← daftar format & argumen per format
 │   ├── platform.rs      ← deteksi YouTube/Facebook/Instagram dari URL
 │   ├── library.rs       ← pustaka: daftar, rename, hapus, cek file hilang
-│   ├── config.rs        ← baca/tulis config.json
-│   ├── deps.rs          ← cek keberadaan & versi yt-dlp/FFmpeg
+│   ├── config.rs        ← baca/tulis config.json, folder unduhan bawaan
+│   ├── deps.rs          ← cari yt-dlp/FFmpeg/ffprobe dan baca versinya
 │   └── setup.rs         ← wizard setup: unduh, verifikasi, ekstrak, pasang komponen
 ├── installer/
 │   └── DANload.iss      ← skrip installer Inno Setup
@@ -366,8 +371,9 @@ DANload/                 ← D:\Code Project\DANload
 | Fase | Isi | Status |
 |------|-----|--------|
 | 0 | Keputusan teknis: Slint, `std::thread`, JSON, lokasi yt-dlp/FFmpeg, Inno Setup | ✅ |
-| 1 | Setup projek Cargo + Slint, jendela GUI kosong, ikon, **ukur RAM/CPU idle** (Bagian 2.6) | ⏳ Kode selesai; menunggu build & hasil ukur di Windows |
-| 2 | Cek dependensi + config + **Wizard setup awal** (unduh yt-dlp/FFmpeg, pilih folder unduhan) | ⬜ |
+| 1 | Setup projek Cargo + Slint, jendela GUI kosong, ikon, **ukur RAM/CPU idle** (Bagian 2.6) | ⏳ Build debug di Windows berhasil; angka RAM/CPU versi rilis belum dilaporkan |
+| 2A | Config, cek komponen (yt-dlp/FFmpeg/ffprobe), halaman Pengaturan, pilih folder unduhan | ⏳ Kode selesai; menunggu uji di Windows |
+| 2B | **Wizard setup awal**: unduh & pasang yt-dlp/FFmpeg, pilih folder unduhan (Bagian 2.9) | ⬜ |
 | 3 | Unduh video MP4 & audio MP3 dari YouTube + progress bar (setara app lama) | ⬜ |
 | 4 | Tambah format lain (Bagian 2.4) | ⬜ |
 | 5 | Dukungan Facebook & Instagram + penanganan error khusus tiap situs | ⬜ |

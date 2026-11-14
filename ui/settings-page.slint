@@ -1,0 +1,251 @@
+// Halaman Pengaturan: status komponen (yt-dlp, FFmpeg, ffprobe) dan folder unduhan.
+// Hanya tampilan. Pemeriksaan komponen dan penyimpanan dilakukan di Rust (src/app.rs).
+
+import { Theme, Icons } from "theme.slint";
+import { Icon, GhostButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// Keadaan satu komponen.
+export enum ComponentState {
+    checking, // sedang diperiksa
+    found, // ditemukan dan bisa dijalankan
+    broken, // file ada, tetapi gagal dijalankan
+    missing, // tidak ditemukan
+}
+
+// Data satu komponen untuk ditampilkan. Diisi dari Rust.
+export struct ComponentInfo {
+    name: string,
+    purpose: string,
+    state: ComponentState,
+    // Nomor versi, atau alasan kenapa gagal.
+    detail: string,
+    // Lokasi file di komputer (kosong jika tidak ditemukan).
+    location: string,
+}
+
+// Label status berwarna, mis. "Terpasang" atau "Belum ada".
+component StatusPill inherits Rectangle {
+    in property <ComponentState> state;
+    property <color> tint: root.state == ComponentState.found ? Theme.ok : root.state == ComponentState.checking ? Theme.text-muted : root.state == ComponentState.broken ? Theme.warning : Theme.error;
+
+    height: 24px;
+    border-radius: 12px;
+    background: root.tint.with-alpha(0.14);
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.tint;
+            }
+        }
+
+        Text {
+            text: root.state == ComponentState.found ? "Terpasang" : root.state == ComponentState.checking ? "Memeriksa..." : root.state == ComponentState.broken ? "Bermasalah" : "Belum ada";
+            font-size: 11px;
+            font-weight: 600;
+            color: root.tint;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Satu baris komponen: nama, kegunaan, versi/lokasi, dan statusnya.
+component ComponentRow inherits Rectangle {
+    in property <ComponentInfo> info;
+
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.field;
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 3px;
+
+            Text {
+                text: root.info.name;
+                font-size: 14px;
+                font-weight: 600;
+                color: Theme.text;
+            }
+
+            Text {
+                text: root.info.purpose;
+                font-size: 12px;
+                color: Theme.text-muted;
+                overflow: elide;
+            }
+
+            // Komponen bermasalah: alasan dan lokasi ditampilkan di baris terpisah.
+            if root.info.state == ComponentState.broken: Text {
+                text: root.info.detail;
+                font-size: 11px;
+                color: Theme.warning;
+                overflow: elide;
+            }
+
+            if root.info.state == ComponentState.broken: Text {
+                text: root.info.location;
+                font-size: 11px;
+                color: Theme.text-dim;
+                overflow: elide;
+            }
+
+            // Keadaan lain: cukup satu baris, mis. "Versi 7.1  ·  C:\...\ffmpeg.exe".
+            if root.info.state != ComponentState.broken && root.info.detail != "": Text {
+                text: root.info.location == "" ? root.info.detail : root.info.detail + "  ·  " + root.info.location;
+                font-size: 11px;
+                color: Theme.text-dim;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 0;
+            alignment: center;
+            StatusPill {
+                state: root.info.state;
+            }
+        }
+    }
+}
+
+// Judul bagian + keterangan singkat.
+component SectionHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> description;
+
+    spacing: 3px;
+
+    Text {
+        text: root.title;
+        font-size: 14px;
+        font-weight: 600;
+        color: Theme.text;
+    }
+
+    Text {
+        text: root.description;
+        font-size: 12px;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+}
+
+export component SettingsPage inherits ScrollView {
+    in property <[ComponentInfo]> components;
+    // `true` selama pemeriksaan komponen masih berjalan.
+    in property <bool> checking;
+    // `true` jika semua komponen ditemukan dan bisa dijalankan.
+    in property <bool> ready;
+    in property <string> download-folder;
+    callback recheck-components();
+    callback choose-download-folder();
+
+    // Isi halaman bisa digulir kalau jendela terlalu pendek.
+    VerticalLayout {
+        alignment: start;
+        spacing: 12px;
+        padding-right: 14px;
+
+    // ---------- Komponen ----------
+    HorizontalLayout {
+        spacing: 12px;
+
+        SectionHeader {
+            horizontal-stretch: 1;
+            title: "Komponen";
+            description: "Program pendukung yang dipakai DANload untuk mengunduh dan mengubah format.";
+        }
+
+        VerticalLayout {
+            alignment: center;
+            GhostButton {
+                text: root.checking ? "Memeriksa..." : "Cek ulang";
+                enabled: !root.checking;
+                clicked => {
+                    root.recheck-components();
+                }
+            }
+        }
+    }
+
+    for info in root.components: ComponentRow {
+        info: info;
+    }
+
+    if !root.checking && !root.ready: Text {
+        text: "Ada komponen yang belum siap, jadi DANload belum bisa mengunduh. Pemasangan otomatis lewat wizard setup akan tersedia di tahap berikutnya.";
+        font-size: 12px;
+        color: Theme.warning;
+        wrap: word-wrap;
+    }
+
+    Rectangle {
+        height: 10px;
+    }
+
+    // ---------- Folder unduhan ----------
+    SectionHeader {
+        title: "Folder unduhan";
+        description: "Tempat file hasil unduhan disimpan. Mengganti folder tidak memindahkan file yang sudah ada.";
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 38px;
+            border-radius: Theme.radius-small;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.field;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        width: 16px;
+                        height: 16px;
+                        commands: Icons.folder;
+                        tint: Theme.text-dim;
+                    }
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.download-folder;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        GhostButton {
+            text: "Ubah...";
+            clicked => {
+                root.choose-download-folder();
+            }
+        }
+    }
+}
+}
