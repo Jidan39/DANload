@@ -2,7 +2,7 @@
 // Hanya tampilan. Pemeriksaan komponen dan penyimpanan dilakukan di Rust (src/app.rs).
 
 import { Theme, Icons } from "theme.slint";
-import { Icon, GhostButton } from "components.slint";
+import { Icon, GhostButton, Checkbox } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // Keadaan satu komponen.
@@ -25,7 +25,7 @@ export struct ComponentInfo {
 }
 
 // Label status berwarna, mis. "Terpasang" atau "Belum ada".
-component StatusPill inherits Rectangle {
+export component StatusPill inherits Rectangle {
     in property <ComponentState> state;
     property <color> tint: root.state == ComponentState.found ? Theme.ok : root.state == ComponentState.checking ? Theme.text-muted : root.state == ComponentState.broken ? Theme.warning : Theme.error;
 
@@ -152,8 +152,13 @@ export component SettingsPage inherits ScrollView {
     // `true` jika semua komponen ditemukan dan bisa dijalankan.
     in property <bool> ready;
     in property <string> download-folder;
+    // Simpan video dan audio di subfolder terpisah (Video\ dan Audio\).
+    in-out property <bool> separate-subfolders;
     callback recheck-components();
     callback choose-download-folder();
+    // Membuka wizard setup di langkah pemasangan komponen.
+    callback open-setup();
+    callback subfolders-toggled(checked: bool);
 
     // Isi halaman bisa digulir kalau jendela terlalu pendek.
     VerticalLayout {
@@ -161,91 +166,109 @@ export component SettingsPage inherits ScrollView {
         spacing: 12px;
         padding-right: 14px;
 
-    // ---------- Komponen ----------
-    HorizontalLayout {
-        spacing: 12px;
+        // ---------- Komponen ----------
+        HorizontalLayout {
+            spacing: 12px;
 
-        SectionHeader {
-            horizontal-stretch: 1;
-            title: "Komponen";
-            description: "Program pendukung yang dipakai DANload untuk mengunduh dan mengubah format.";
-        }
-
-        VerticalLayout {
-            alignment: center;
-            GhostButton {
-                text: root.checking ? "Memeriksa..." : "Cek ulang";
-                enabled: !root.checking;
-                clicked => {
-                    root.recheck-components();
-                }
+            SectionHeader {
+                horizontal-stretch: 1;
+                title: "Komponen";
+                description: "Program pendukung yang dipakai DANload untuk mengunduh dan mengubah format.";
             }
-        }
-    }
 
-    for info in root.components: ComponentRow {
-        info: info;
-    }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    spacing: 8px;
+                    GhostButton {
+                        text: root.checking ? "Memeriksa..." : "Cek ulang";
+                        enabled: !root.checking;
+                        clicked => {
+                            root.recheck-components();
+                        }
+                    }
 
-    if !root.checking && !root.ready: Text {
-        text: "Ada komponen yang belum siap, jadi DANload belum bisa mengunduh. Pemasangan otomatis lewat wizard setup akan tersedia di tahap berikutnya.";
-        font-size: 12px;
-        color: Theme.warning;
-        wrap: word-wrap;
-    }
-
-    Rectangle {
-        height: 10px;
-    }
-
-    // ---------- Folder unduhan ----------
-    SectionHeader {
-        title: "Folder unduhan";
-        description: "Tempat file hasil unduhan disimpan. Mengganti folder tidak memindahkan file yang sudah ada.";
-    }
-
-    HorizontalLayout {
-        spacing: 8px;
-
-        Rectangle {
-            horizontal-stretch: 1;
-            height: 38px;
-            border-radius: Theme.radius-small;
-            border-width: 1px;
-            border-color: Theme.border;
-            background: Theme.field;
-
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 8px;
-
-                VerticalLayout {
-                    alignment: center;
-                    Icon {
-                        width: 16px;
-                        height: 16px;
-                        commands: Icons.folder;
-                        tint: Theme.text-dim;
+                    GhostButton {
+                        text: "Pasang / perbarui...";
+                        clicked => {
+                            root.open-setup();
+                        }
                     }
                 }
+            }
+        }
 
-                Text {
-                    horizontal-stretch: 1;
-                    text: root.download-folder;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    overflow: elide;
+        for info in root.components: ComponentRow {
+            info: info;
+        }
+
+        if !root.checking && !root.ready: Text {
+            text: "Ada komponen yang belum siap, jadi DANload belum bisa mengunduh. Klik \"Pasang / perbarui...\" untuk memasangnya secara otomatis.";
+            font-size: 12px;
+            color: Theme.warning;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            height: 10px;
+        }
+
+        // ---------- Folder unduhan ----------
+        SectionHeader {
+            title: "Folder unduhan";
+            description: "Tempat file hasil unduhan disimpan. Mengganti folder tidak memindahkan file yang sudah ada.";
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 38px;
+                border-radius: Theme.radius-small;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.field;
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            width: 16px;
+                            height: 16px;
+                            commands: Icons.folder;
+                            tint: Theme.text-dim;
+                        }
+                    }
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.download-folder;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            GhostButton {
+                text: "Ubah...";
+                clicked => {
+                    root.choose-download-folder();
                 }
             }
         }
 
-        GhostButton {
-            text: "Ubah...";
-            clicked => {
-                root.choose-download-folder();
+        Checkbox {
+            text: "Pisahkan ke subfolder Video dan Audio";
+            checked <=> root.separate-subfolders;
+            toggled(checked) => {
+                root.subfolders-toggled(checked);
             }
         }
     }
-}
 }

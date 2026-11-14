@@ -45,29 +45,29 @@ Folder lama itu **hanya sebagai referensi** — **jangan diubah**.
 ### 2.3 Fitur yang Diharapkan
 
 **Wajib (MVP) — minimal setara aplikasi lama:**
-- [ ] Input URL + tombol **Tempel** dari clipboard
-- [ ] Deteksi otomatis sumber: YouTube / Facebook / Instagram
-- [ ] Pilih mode: **Video** atau **Audio**
+- [x] Input URL + tombol **Tempel** dari clipboard
+- [x] **Pilih platform** (YouTube / Facebook / Instagram) di bar atas **sebelum mengunduh**; bawaan **YouTube** setiap aplikasi dibuka. URL harus berasal dari platform yang dipilih; kalau tidak cocok, muncul peringatan dan tombol Unduh tidak aktif *(permintaan pemilik projek, 2026-11-14)*
+- [x] Pilih mode: **Video** atau **Audio**
 - [ ] Pilih format output (lihat 2.4)
-- [ ] Pilih resolusi maksimum (video) / bitrate (audio)
-- [ ] Pilih folder simpan, dan folder terakhir diingat
+- [ ] Pilih resolusi maksimum (video) / bitrate (audio) — *ada sejak Fase 3, menunggu uji di Windows*
+- [x] Pilih folder simpan, dan folder terakhir diingat
 - [ ] Opsi unduh seluruh playlist
-- [ ] Progress bar (persen, kecepatan, ETA) + panel log
-- [ ] Pengecekan yt-dlp dan FFmpeg saat aplikasi dibuka, dengan pesan error yang jelas
-- [ ] **Wizard setup awal** di dalam aplikasi: memasang yt-dlp & FFmpeg otomatis dan mengatur folder unduhan (detail di Bagian 2.9)
+- [ ] Progress bar (persen, kecepatan, ETA) — *ada sejak Fase 3 di kartu unduhan, menunggu uji di Windows*; panel log belum
+- [x] Pengecekan yt-dlp dan FFmpeg saat aplikasi dibuka, dengan pesan error yang jelas
+- [x] **Wizard setup awal** di dalam aplikasi: memasang yt-dlp, FFmpeg, dan Deno otomatis dan mengatur folder unduhan (detail di Bagian 2.9)
 - [ ] **Installer Windows** yang mudah dipakai orang awam (detail di Bagian 2.9)
-- [ ] Pengaturan disimpan di `%APPDATA%\DANload\config.json`
+- [x] Pengaturan disimpan di `%APPDATA%\DANload\config.json`
 - [ ] **Pustaka (Library):** menampilkan semua file yang sudah diunduh, bisa **dihapus** dan **di-rename** dari dalam aplikasi (detail di Bagian 2.8)
-- [ ] UI tidak macet (freeze) selama proses unduh
-- [ ] Ikon aplikasi
+- [ ] UI tidak macet (freeze) selama proses unduh — *unduhan berjalan di thread terpisah sejak Fase 3, menunggu uji di Windows*
+- [x] Ikon aplikasi
 
 **Tambahan (setelah MVP stabil):**
 - [ ] Antrean (queue) beberapa URL sekaligus
-- [ ] Tombol batal (cancel) unduhan
+- [ ] Tombol batal (cancel) unduhan — *ada sejak Fase 3 untuk unduhan yang sedang berjalan (dimajukan dari Fase 7), menunggu uji di Windows*
 - [ ] Edit singkat lain di pustaka (mis. potong/trim audio-video via FFmpeg) — dipertimbangkan nanti
 - [ ] Pratinjau info video sebelum unduh (judul, durasi, thumbnail, daftar kualitas)
 - [ ] Unduh subtitle
-- [ ] Tombol update yt-dlp & FFmpeg dari dalam aplikasi (memakai mekanisme yang sama dengan wizard)
+- [ ] Tombol update yt-dlp & FFmpeg dari dalam aplikasi (memakai mekanisme yang sama dengan wizard) — *pasang ulang versi terbaru sudah bisa lewat wizard sejak Fase 2B; pengecekan otomatis apakah ada versi baru belum*
 - [ ] Dukungan cookies browser (untuk konten yang butuh login, mis. sebagian Instagram)
 - [ ] Opsi tema terang (default: gelap)
 
@@ -105,8 +105,10 @@ Catatan: format yang butuh **re-encode** (AVI, MPEG, kadang MOV) harus diberi pe
 | Dialog bawaan Windows (pilih folder, kotak pesan) | `rfd` | ✅ Ditetapkan |
 | Data pustaka/riwayat | File **JSON** (`serde_json`) di `%APPDATA%\DANload\` | ✅ Ditetapkan |
 | Lokasi yt-dlp/FFmpeg | `%LOCALAPPDATA%\DANload\bin\` → folder `bin\` di samping `DANload.exe` → `PATH` (urutan pencarian) | ✅ Ditetapkan |
-| Unduh komponen (wizard) | `ureq` (HTTP, blocking) + `sha2` (checksum) + `zip` (ekstrak) | ✅ Disetujui, ditambahkan di Fase 2B |
-| Sumber FFmpeg | Utama: **gyan.dev essentials `.zip`** (±88 MB, ada `.sha256`). Cadangan: **BtbN** GPL static `.zip` (±163 MiB). Keduanya ditautkan dari ffmpeg.org | ✅ Ditetapkan |
+| Unduh komponen (wizard) | `ureq` 3 (HTTPS, sertifikat dari Windows lewat fitur `platform-verifier`) + `sha2` (checksum) + `zip` (ekstrak, fitur `deflate-flate2-zlib-rs`) | ✅ Ditetapkan (Fase 2B) |
+| Sumber yt-dlp | GitHub resmi `yt-dlp/yt-dlp`: `releases/latest/download/yt-dlp.exe`, checksum dari `SHA2-256SUMS`. Versi minimal **2025.11.12** (dukungan runtime JavaScript) | ✅ Ditetapkan |
+| Runtime JavaScript (YouTube) | **Deno**, dipasang wizard dari GitHub resmi `denoland/deno`: `deno-x86_64-pc-windows-msvc.zip` (±43 MB, isinya `deno.exe` ±98 MB), checksum dari `.zip.sha256sum` (format keluaran `Get-FileHash` PowerShell). Versi minimal **2.3.0**. Diberikan ke yt-dlp lewat `--js-runtimes deno:PATH` | ✅ Ditetapkan 2026-11-14 |
+| Sumber FFmpeg | Utama: **gyan.dev** `ffmpeg-release-essentials.zip`, checksum dari `ffmpeg-release-essentials.zip.sha256` (±109 MB untuk versi 9.0.2, dicek 2026-11-14). Cadangan: **BtbN** `ffmpeg-master-latest-win64-gpl.zip`, checksum dari `checksums.sha256` (ukurannya lebih besar). Keduanya ditautkan dari ffmpeg.org | ✅ Ditetapkan |
 | Installer | **Inno Setup** | ✅ Ditetapkan |
 | Hapus file | Pindah ke **Recycle Bin** (mis. crate `trash`), bukan hapus permanen | ✅ Disarankan |
 | Error handling | `anyhow` / `thiserror` | ✅ Disarankan |
@@ -132,6 +134,12 @@ Disetujui pemilik projek, 2026-11-14.
   - FFmpeg dijalankan dengan prioritas proses rendah supaya komputer tidak terasa berat saat konversi.
   - Jangan menambah crate berat tanpa alasan jelas dan persetujuan.
 - Jika target tidak tercapai, **laporkan angka hasil ukur** dan usulkan perbaikan sebelum melanjutkan fase berikutnya.
+
+**Riwayat hasil ukur di Windows**
+
+| Tanggal | Build | RAM | CPU | Catatan |
+|---------|-------|-----|-----|---------|
+| 2026-11-14 | Fase 2B, release | 9,8 MB | 0% | Dilaporkan pemilik projek (Task Manager, tab Processes) |
 
 ### 2.7 Desain UI
 
@@ -164,7 +172,7 @@ Yang ditiru adalah **gaya dan tata letaknya**, bukan nama, logo, atau konten apl
 └──────────────────────────────────────────────────────────────────┘
 ```
 - **Sidebar kiri (ikon):** Unduh, Pustaka, Antrean (dengan badge jumlah), Pengaturan.
-- **Bar atas:** nama aplikasi, kolom pencarian, indikator platform (YouTube / Facebook / Instagram) yang menyala otomatis sesuai URL.
+- **Bar atas:** nama aplikasi, kolom pencarian, dan **pilihan platform** (YouTube / Facebook / Instagram). Pengguna memilih platform sebelum mengunduh (bawaan YouTube); label dan contoh URL di panel kanan ikut berganti, dan di bawah kolom URL muncul pesan apakah link cocok dengan platform terpilih. Platform **tidak** berganti otomatis mengikuti URL.
 - **Area tengah:** daftar item dengan thumbnail, judul, platform, format, kualitas, ukuran, tanggal; *chip* filter di atas daftar; centang untuk pilih banyak.
 - **Panel kanan:** form unduh baru, atau detail file yang sedang dipilih (thumbnail besar, info, tombol aksi).
 - **Status bar bawah:** status, jumlah unduhan aktif, tombol "Batal semua", versi aplikasi.
@@ -202,21 +210,36 @@ Tujuan: orang awam bisa memasang dan memakai DANload **tanpa membuka terminal** 
 | Langkah | Isi |
 |---------|-----|
 | 1. Selamat datang | Penjelasan singkat apa yang akan dipasang dan kenapa dibutuhkan |
-| 2. Cek komponen | Tampilkan status yt-dlp dan FFmpeg: ✅ ditemukan (lokasi + versi) / ❌ belum ada |
-| 3. Pasang komponen | Tombol **Pasang otomatis**: unduh dari sumber resmi, tampilkan progress & ukuran, verifikasi, ekstrak, pasang ke `%LOCALAPPDATA%\DANload\bin\`. Alternatif: **Pilih file manual** (jika pengguna sudah punya yt-dlp.exe/ffmpeg.exe) atau **Buka halaman unduhan** |
-| 4. Folder unduhan | Pilih folder default (awal: `%USERPROFILE%\Downloads\DANload`); opsi subfolder otomatis `Video\` dan `Audio\` |
-| 5. Selesai | Ringkasan pengaturan → masuk ke tampilan utama |
+| 2. Komponen | Status yt-dlp, FFmpeg, ffprobe, Deno (Terpasang + versi / Bermasalah, termasuk versi terlalu lama / Belum ada). **Pasang otomatis** (hanya yang belum siap) atau **Pasang versi terbaru** (semua): unduh dari sumber resmi, progress + ukuran, verifikasi checksum, ekstrak, pasang ke `%LOCALAPPDATA%\DANload\bin\`; bisa **Batal**. Alternatif: **Pilih file sendiri...** (`yt-dlp.exe`, `ffmpeg.exe`/`ffprobe.exe`, atau `deno.exe`; program satu paket di folder yang sama ikut disalin). Jika gagal: pesan jelas, tombol **Coba lagi**, dan petunjuk unduh manual. Boleh **Lewati dulu** |
+| 3. Folder unduhan | Pilih folder (awal: `%USERPROFILE%\Downloads\DANload`); opsi subfolder otomatis `Video\` dan `Audio\` |
+| 4. Selesai | Ringkasan (komponen, folder, subfolder) → **Mulai pakai DANload** menandai setup selesai |
+
+*Catatan Fase 2B: rancangan awal 5 langkah; langkah "cek" dan "pasang" digabung menjadi satu langkah "Komponen". Tombol "Buka halaman unduhan" diganti petunjuk teks yang muncul saat pemasangan gagal.*
 
 Aturan wizard:
-- Bisa dibuka lagi kapan saja dari **Pengaturan** (pasang ulang, update komponen, ganti folder unduhan).
+- Bisa dibuka lagi kapan saja dari **Pengaturan** → tombol **Pasang / perbarui...** (pasang ulang, update komponen, ganti folder unduhan).
+- **Nanti saja** menutup wizard tanpa menandai setup selesai, jadi wizard muncul lagi saat aplikasi dibuka berikutnya. Jika setup sudah selesai tetapi ada komponen yang hilang/rusak, wizard terbuka otomatis di langkah Komponen.
 - Aplikasi tetap bisa dibuka walau komponen belum ada, tetapi tombol Unduh dinonaktifkan dengan pesan jelas + tombol menuju wizard.
 - Sumber unduhan hanya dari sumber resmi: yt-dlp dari rilis GitHub resmi; FFmpeg dari build Windows yang ditautkan di situs resmi ffmpeg.org. URL ditulis di satu tempat di kode supaya mudah diganti.
-- Verifikasi checksum (SHA-256) jika sumber menyediakannya; jika gagal verifikasi, file dibuang dan pengguna diberi tahu.
+- Verifikasi checksum (SHA-256) **wajib**; semua sumber yang dipakai menyediakannya. Jika checksum tidak bisa diambil atau tidak cocok, file dibuang dan sumber cadangan dicoba (FFmpeg: gyan.dev → BtbN); kalau semua gagal, pengguna diberi tahu.
 - File diunduh **langsung ke disk secara streaming** (bukan ditampung di RAM), ke folder sementara dulu, lalu dipindah setelah lengkap & terverifikasi — supaya tidak ada file setengah jadi.
 - Tangani kondisi: tidak ada internet, unduhan terputus (bisa coba lagi), ruang disk tidak cukup, antivirus memblokir file.
 - Ganti folder unduhan **tidak** memindahkan file lama; Pustaka tetap menyimpan lokasi asli setiap file.
 - Lisensi: FFmpeg dan yt-dlp diunduh dari sumber resminya oleh pengguna sendiri (tidak dibundel di installer). Cantumkan nama & lisensi keduanya di halaman "Tentang".
-- **Pertanyaan terbuka (putuskan di Fase 3):** dokumentasi yt-dlp sangat menganjurkan *runtime* JavaScript (kemungkinan Deno) di samping ffmpeg/ffprobe, terutama untuk YouTube. Wizard dibuat berbasis daftar komponen supaya komponen ketiga bisa ditambah dengan mudah. *(Belum diverifikasi dengan unduhan nyata.)*
+- **Runtime JavaScript (diputuskan 2026-11-14):** sejak yt-dlp 2025.11.12, YouTube butuh runtime JavaScript; tanpa itu dukungan YouTube dianggap *deprecated*. Dipilih **Deno** (paling direkomendasikan yt-dlp dan satu-satunya yang aktif bawaan) sebagai komponen keempat yang dipasang wizard. Lisensi Deno juga dicantumkan di halaman "Tentang".
+
+### 2.10 Perilaku Unduhan (sejak Fase 3)
+
+- **Syarat tombol Unduh aktif:** semua komponen siap, link cocok dengan platform terpilih, platform itu sudah didukung (Fase 3: baru YouTube), dan tidak ada unduhan lain yang berjalan (satu unduhan sekaligus sampai antrean di Fase 7).
+- **Format:** MP4 memakai aturan aplikasi lama (`bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best`, digabung ke MP4) dengan batas resolusi `[height<=?N]` — tanda `?` supaya format yang tingginya tidak diketahui tidak ikut tersaring habis (ditemukan saat uji dengan yt-dlp asli). MP3: `-x --audio-format mp3 --audio-quality NK --embed-metadata`.
+- **Nama file:** `Judul [ID].ext` (bawaan yt-dlp), supaya dua video berjudul sama tidak dianggap file yang sama. Bisa di-rename di Pustaka (Fase 6).
+- **Folder:** folder unduhan, ditambah `Video\` / `Audio\` jika subfolder aktif. File sementara (`.part`) ditaruh di `.danload-tmp\` di dalam folder itu (drive yang sama, jadi tidak perlu disalin antar-drive) dan **selalu dihapus** setelah berhasil, gagal, atau dibatalkan.
+- **Cara membaca kemajuan:** yt-dlp dijalankan dengan `--progress-template`, `--print before_dl:` (judul), dan `--print after_move:` (lokasi file akhir), yang mencetak baris khusus berawalan `DANLOAD|`. Progress unduhan keluar di stdout, tahap FFmpeg di stderr, jadi keduanya dibaca. Laporan ke UI dibatasi ±10 kali per detik.
+- **Opsi tetap:** `--ignore-config` (abaikan config yt-dlp milik pengguna), `--encoding utf-8`, `--no-playlist` (playlist di Fase 7), `--windows-filenames`, `--no-mtime`, `--ffmpeg-location`, `--js-runtimes deno:PATH`, dan `--` sebelum URL.
+- **Proses:** yt-dlp berjalan tanpa jendela console dan berprioritas rendah (`BELOW_NORMAL`); FFmpeg ikut berprioritas rendah karena diwariskan.
+- **Batal:** menghentikan yt-dlp beserta semua proses anaknya (`taskkill /T /F`), lalu membersihkan folder sementara. Menutup jendela saat unduhan berjalan memunculkan konfirmasi; jika disetujui, unduhan dihentikan dulu (paling lama 5 detik) sebelum aplikasi tertutup.
+- **Error:** baris `ERROR:` dari yt-dlp diterjemahkan menjadi pesan berbahasa Indonesia (video privat, dibatasi umur, verifikasi bukan bot, khusus anggota, belum tayang, tidak tersedia di negara ini, dihapus, kualitas tidak tersedia, link tidak didukung, disk penuh, izin folder, gagal memproses YouTube, terlalu banyak permintaan, 404, 403, koneksi). Pesan yang tidak dikenal ditampilkan apa adanya tanpa awalan teknis.
+- **Daftar unduhan:** hanya untuk sesi ini (terbaru di atas), dengan tombol Batal, Tampilkan di folder, dan Coba lagi. Riwayat permanen menjadi bagian Pustaka (Fase 6).
 
 ---
 
@@ -286,6 +309,9 @@ Selain file di `changes/`, tambahkan **satu baris** ke `CHANGELOG.md` di root pr
 - Build, menjalankan aplikasi, dan pengukuran RAM/CPU dilakukan **di Windows pemilik projek**. Jika Claude tidak bisa menjalankan perintah langsung di Windows, Claude memberikan perintah yang harus dijalankan beserta hasil yang diharapkan, lalu pemilik projek melaporkan hasilnya.
 - Sebelum Fase 1, pastikan `rustc --version` dan `cargo --version` sudah bisa dijalankan di terminal.
 - Projek memakai git dengan remote di GitHub milik pemilik projek. `git commit` dan `git push` dijalankan oleh pemilik projek (atau oleh Claude hanya dengan izin, lihat Bagian 1).
+- `cargo test` menjalankan semua unit test tanpa internet. `cargo test -- --ignored` menjalankan juga test yang menghubungi sumber resmi yt-dlp/FFmpeg (butuh internet; hanya mengambil file checksum yang kecil).
+- Menguji wizard tanpa internet (khusus build debug): jalankan server lokal berisi `yt-dlp.exe`, `SHA2-256SUMS`, `ffmpeg-release-essentials.zip`, `ffmpeg-release-essentials.zip.sha256`, `deno-x86_64-pc-windows-msvc.zip`, dan `deno-x86_64-pc-windows-msvc.zip.sha256sum`, lalu set `DANLOAD_DEV_MIRROR=http://127.0.0.1:8000` sebelum `cargo run`. Build rilis mengabaikan variabel ini.
+- Menguji mesin unduh dengan yt-dlp sungguhan (tidak jalan otomatis): isi `DANLOAD_TEST_YTDLP`, `DANLOAD_TEST_FFMPEG_DIR`, `DANLOAD_TEST_DENO`, dan `DANLOAD_TEST_URL`, lalu `cargo test real_yt_dlp -- --ignored --nocapture`. Test ini mengunduh MP3 dan MP4 ke folder sementara sistem.
 
 ---
 
@@ -347,18 +373,21 @@ DANload/                 ← D:\Code Project\DANload
 ├── ui/
 │   ├── app-window.slint ← jendela utama
 │   ├── settings-page.slint ← halaman Pengaturan (status komponen, folder unduhan)
-│   ├── components.slint ← komponen kecil (tombol, chip, kolom isian)
+│   ├── setup-wizard.slint  ← wizard setup awal (4 langkah)
+│   ├── downloads.slint  ← kartu unduhan di halaman Unduhan
+│   ├── components.slint ← komponen kecil (tombol, chip, kolom isian, dropdown, progress bar)
 │   └── theme.slint      ← warna, ukuran, bentuk ikon
 ├── src/
 │   ├── main.rs          ← titik masuk aplikasi
 │   ├── app.rs           ← penghubung Slint ↔ logika (callback, thread pekerja)
-│   ├── downloader.rs    ← memanggil yt-dlp, membaca progress
-│   ├── formats.rs       ← daftar format & argumen per format
-│   ├── platform.rs      ← deteksi YouTube/Facebook/Instagram dari URL
-│   ├── library.rs       ← pustaka: daftar, rename, hapus, cek file hilang
+│   ├── downloader.rs    ← menjalankan yt-dlp, membaca progress, pesan error, batal
+│   ├── formats.rs       ← pilihan format (MP4/MP3), resolusi, bitrate & argumen yt-dlp
+│   ├── process.rs       ← jalankan program tanpa console, prioritas rendah, kill tree, buka Explorer
+│   ├── platform.rs      ← platform terpilih & cek kecocokan URL (YouTube/Facebook/Instagram)
+│   ├── library.rs       ← pustaka: daftar, rename, hapus, cek file hilang (belum dibuat; Fase 6)
 │   ├── config.rs        ← baca/tulis config.json, folder unduhan bawaan
-│   ├── deps.rs          ← cari yt-dlp/FFmpeg/ffprobe dan baca versinya
-│   └── setup.rs         ← wizard setup: unduh, verifikasi, ekstrak, pasang komponen
+│   ├── deps.rs          ← cari yt-dlp/FFmpeg/ffprobe/Deno, baca & cek versinya
+│   └── setup.rs         ← unduh, verifikasi checksum, ekstrak, pasang komponen (dipakai wizard)
 ├── installer/
 │   └── DANload.iss      ← skrip installer Inno Setup
 └── bin/                 ← (opsional, untuk pengujian lokal) yt-dlp.exe & ffmpeg.exe, TIDAK di-commit
@@ -371,14 +400,14 @@ DANload/                 ← D:\Code Project\DANload
 | Fase | Isi | Status |
 |------|-----|--------|
 | 0 | Keputusan teknis: Slint, `std::thread`, JSON, lokasi yt-dlp/FFmpeg, Inno Setup | ✅ |
-| 1 | Setup projek Cargo + Slint, jendela GUI kosong, ikon, **ukur RAM/CPU idle** (Bagian 2.6) | ⏳ Build debug di Windows berhasil; angka RAM/CPU versi rilis belum dilaporkan |
-| 2A | Config, cek komponen (yt-dlp/FFmpeg/ffprobe), halaman Pengaturan, pilih folder unduhan | ⏳ Kode selesai; menunggu uji di Windows |
-| 2B | **Wizard setup awal**: unduh & pasang yt-dlp/FFmpeg, pilih folder unduhan (Bagian 2.9) | ⬜ |
-| 3 | Unduh video MP4 & audio MP3 dari YouTube + progress bar (setara app lama) | ⬜ |
+| 1 | Setup projek Cargo + Slint, jendela GUI kosong, ikon, **ukur RAM/CPU idle** (Bagian 2.6) | ✅ |
+| 2A | Config, cek komponen (yt-dlp/FFmpeg/ffprobe), halaman Pengaturan, pilih folder unduhan | ✅ |
+| 2B | **Wizard setup awal** (Bagian 2.9) + **pilihan platform** dengan cek kecocokan URL (bawaan YouTube) | ✅ Diuji di Windows 2026-11-14 (RAM 9,8 MB, CPU 0%) |
+| 3 | Unduh video MP4 & audio MP3 dari YouTube + progress bar (setara app lama), Deno, tombol Batal (Bagian 2.10) | ⏳ Kode selesai & diuji di Linux dengan yt-dlp asli; menunggu uji YouTube di Windows |
 | 4 | Tambah format lain (Bagian 2.4) | ⬜ |
 | 5 | Dukungan Facebook & Instagram + penanganan error khusus tiap situs | ⬜ |
 | 6 | **Pustaka:** daftar unduhan, cari/filter, rename, hapus (Recycle Bin) | ⬜ |
-| 7 | Playlist, antrean, tombol batal | ⬜ |
+| 7 | Playlist, antrean (tombol batal sudah ada sejak Fase 3) | ⬜ |
 | 8 | Poles UI agar sesuai Bagian 2.7, build release, **installer** (Bagian 2.9), README, uji di Windows bersih | ⬜ |
 
 Perbarui kolom status setiap kali satu fase selesai (dan catat di `changes/`).

@@ -1,9 +1,14 @@
 //! DANload - titik masuk aplikasi.
 //!
 //! Pembagian modul:
-//! - `app`    : penghubung tampilan (Slint) dengan logika
-//! - `config` : pengaturan yang disimpan di config.json
-//! - `deps`   : mencari yt-dlp, FFmpeg, dan ffprobe
+//! - `app`        : penghubung tampilan (Slint) dengan logika
+//! - `config`     : pengaturan yang disimpan di config.json
+//! - `deps`       : mencari yt-dlp, FFmpeg, ffprobe, dan Deno
+//! - `downloader` : menjalankan yt-dlp untuk satu unduhan dan membaca kemajuannya
+//! - `formats`    : pilihan format (MP4/MP3) dan argumen yt-dlp-nya
+//! - `platform`   : platform terpilih (YouTube/Facebook/Instagram) dan pengecekan URL
+//! - `process`    : menjalankan program eksternal tanpa console, prioritas rendah, kill tree
+//! - `setup`      : mengunduh dan memasang komponen (dipakai wizard setup)
 
 // Di build rilis, jangan munculkan jendela console hitam di belakang aplikasi.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -11,9 +16,14 @@
 mod app;
 mod config;
 mod deps;
+mod downloader;
+mod formats;
+mod platform;
+mod process;
+mod setup;
 
 // Memasukkan kode Rust hasil kompilasi file `.slint` (dibuat oleh build.rs).
-// Dari sinilah tipe `AppWindow`, `ComponentInfo`, dan `ComponentState` berasal.
+// Dari sinilah tipe `AppWindow`, `ComponentInfo`, `WizardState`, dan lainnya berasal.
 slint::include_modules!();
 
 fn main() {
@@ -40,5 +50,8 @@ fn run() -> Result<(), slint::PlatformError> {
     app::setup(&window);
 
     // Menampilkan jendela dan menjalankan event loop sampai jendela ditutup.
-    window.run()
+    let result = window.run();
+    // Pastikan tidak ada yt-dlp/FFmpeg yang tertinggal berjalan setelah jendela tertutup.
+    app::shutdown();
+    result
 }

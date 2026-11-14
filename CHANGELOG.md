@@ -4,6 +4,8 @@ Ringkasan semua perubahan projek. Detail tiap perubahan ada di folder `changes/`
 
 | Tanggal | Perubahan | Detail |
 |---------|-----------|--------|
+| 2026-11-15 | Fase 3: unduh YouTube MP4/MP3, Deno, tombol Batal | [changes/2026-11-15_fase-3-unduh-youtube-mp4-mp3.md](changes/2026-11-15_fase-3-unduh-youtube-mp4-mp3.md) |
+| 2026-11-14 | Fase 2B: wizard setup awal dan pilihan platform (bawaan YouTube) | [changes/2026-11-14_fase-2b-wizard-setup-dan-pilihan-platform.md](changes/2026-11-14_fase-2b-wizard-setup-dan-pilihan-platform.md) |
 | 2026-11-14 | Fase 2A: config, cek komponen, halaman Pengaturan | [changes/2026-11-14_fase-2a-config-dan-cek-komponen.md](changes/2026-11-14_fase-2a-config-dan-cek-komponen.md) |
 | 2026-11-14 | Fase 1: setup Cargo + Slint dan kerangka UI | [changes/2026-11-14_setup-cargo-dan-kerangka-ui.md](changes/2026-11-14_setup-cargo-dan-kerangka-ui.md) |
 | 2026-11-14 | Ganti nama folder ke DANload, Inno Setup, lingkungan pengembangan | [changes/2026-11-14_rename-folder-inno-setup-dan-lingkungan.md](changes/2026-11-14_rename-folder-inno-setup-dan-lingkungan.md) |

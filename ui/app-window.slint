@@ -1,7 +1,7 @@
-// Jendela utama DANload (Fase 2A: kerangka tampilan + halaman Pengaturan).
+// Jendela utama DANload (Fase 3: unduh YouTube MP4/MP3, Pengaturan, wizard setup).
 //
 // Tata letak mengikuti CLAUDE.md Bagian 2.7:
-//   bar atas  : nama aplikasi, kolom cari, penanda platform
+//   bar atas  : nama aplikasi, kolom cari, pilihan platform
 //   kiri      : sidebar navigasi
 //   tengah    : daftar (unduhan / pustaka / antrean) atau pengaturan
 //   kanan     : form "Unduh baru"
@@ -13,12 +13,22 @@
 import { Theme, Icons } from "theme.slint";
 import {
     Icon, Panel, NavButton, Chip, PlatformBadge, InputField,
-    PrimaryButton, GhostButton, Segmented, FieldLabel, ValueRow
+    PrimaryButton, GhostButton, Segmented, FieldLabel, ValueRow, Dropdown
 } from "components.slint";
+import { DownloadList, DownloadItem, DownloadState } from "downloads.slint";
 import { SettingsPage, ComponentInfo, ComponentState } from "settings-page.slint";
+import { SetupWizard, WizardState } from "setup-wizard.slint";
+
+// Hasil pengecekan URL terhadap platform yang dipilih. Dihitung di Rust (src/platform.rs).
+export struct UrlFeedback {
+    // `true` jika URL berasal dari platform yang dipilih dan boleh diunduh.
+    valid: bool,
+    // Pesan di bawah kolom URL (kosong = tidak ada pesan).
+    message: string,
+}
 
 // Diekspor supaya tipe ini bisa dipakai dari Rust (src/app.rs).
-export { ComponentInfo, ComponentState }
+export { ComponentInfo, ComponentState, WizardState, DownloadItem, DownloadState }
 
 export component AppWindow inherits Window {
     // Diisi dari Rust (src/main.rs) memakai versi di Cargo.toml.
@@ -30,6 +40,8 @@ export component AppWindow inherits Window {
     in-out property <int> current-filter: 0;
     // Mode unduh: 0 = Video, 1 = Audio.
     in-out property <int> download-mode: 0;
+    // Platform sumber yang dipilih pengguna: indeks ke `platforms`. Bawaan: YouTube.
+    in-out property <int> platform: 0;
     // URL yang diketik atau ditempel pengguna.
     in-out property <string> url <=> url-field.text;
 
@@ -44,11 +56,43 @@ export component AppWindow inherits Window {
     in property <string> download-folder;
     // Pesan masalah untuk status bar (kosong = tidak ada masalah).
     in property <string> notice;
+    // Simpan video dan audio di subfolder terpisah.
+    in-out property <bool> separate-subfolders;
 
     // ----- Ditangani di Rust (src/app.rs) -----
     callback recheck-components();
     callback choose-download-folder();
     callback download-mode-changed(index: int);
+    callback subfolders-toggled(checked: bool);
+    // Mengecek apakah `url` berasal dari platform berindeks `platform`.
+    // `pure`: hanya menghitung, tidak mengubah apa pun, jadi aman dipakai di binding.
+    pure callback check-url(platform: int, url: string) -> UrlFeedback;
+
+    // Dihitung ulang otomatis setiap kali platform atau URL berubah.
+    property <UrlFeedback> url-feedback: root.check-url(root.platform, root.url);
+
+    // ----- Unduhan -----
+    // Daftar unduhan sesi ini, terbaru di atas. Diisi dari Rust.
+    in property <[DownloadItem]> downloads;
+    // `true` selama ada unduhan berjalan (Fase 3: satu unduhan sekaligus).
+    in property <bool> downloading;
+    // Pilihan resolusi dan bitrate (labelnya dari Rust, src/formats.rs).
+    in property <[string]> video-quality-options;
+    in property <[string]> audio-bitrate-options;
+    in-out property <int> video-quality-index;
+    in-out property <int> audio-bitrate-index;
+    callback start-download();
+    callback cancel-download(id: int);
+    callback retry-download(id: int);
+    callback show-in-folder(id: int);
+    callback video-quality-changed(index: int);
+    callback audio-bitrate-changed(index: int);
+
+    // Tombol Unduh aktif hanya jika komponen lengkap, link cocok dengan platform
+    // (dan platformnya sudah didukung, dicek di Rust), dan tidak ada unduhan berjalan.
+    property <bool> can-download: root.components-ready && root.url-feedback.valid && !root.downloading;
+    // Alasan tombol Unduh belum aktif (kosong jika tidak perlu penjelasan).
+    property <string> download-hint: root.downloading ? "Tunggu unduhan yang sedang berjalan selesai." : root.checking-components ? "Memeriksa komponen..." : !root.components-ready ? "Komponen belum lengkap. Buka Pengaturan untuk memasangnya." : root.url == "" ? "Tempel link " + root.platforms[root.platform].name + " untuk mulai." : "";
 
     property <[{ title: string, empty-title: string, empty-hint: string, icon: string }]> pages: [
         {
@@ -77,6 +121,11 @@ export component AppWindow inherits Window {
         },
     ];
     property <[string]> filters: ["Semua", "Video", "Audio", "YouTube", "Facebook", "Instagram"];
+    property <[{ name: string, url-hint: string }]> platforms: [
+        { name: "YouTube", url-hint: "https://www.youtube.com/watch?v=..." },
+        { name: "Facebook", url-hint: "https://www.facebook.com/..." },
+        { name: "Instagram", url-hint: "https://www.instagram.com/reel/..." },
+    ];
 
     title: "DANload";
     icon: @image-url("../assets/icon.png");
@@ -130,7 +179,7 @@ export component AppWindow inherits Window {
                 placeholder: "Cari file unduhan...";
             }
 
-            // Penanda platform
+            // Pilihan platform sumber unduhan
             Rectangle {
                 horizontal-stretch: 0;
                 height: 40px;
@@ -140,16 +189,12 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     padding: 5px;
                     spacing: 2px;
-                    PlatformBadge {
-                        text: "YouTube";
-                    }
-
-                    PlatformBadge {
-                        text: "Facebook";
-                    }
-
-                    PlatformBadge {
-                        text: "Instagram";
+                    for item[index] in root.platforms: PlatformBadge {
+                        text: item.name;
+                        active: root.platform == index;
+                        clicked => {
+                            root.platform = index;
+                        }
                     }
                 }
             }
@@ -241,22 +286,46 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // Halaman Unduhan: daftar kartu unduhan sesi ini.
+                    if root.current-page == 0 && root.downloads.length > 0: DownloadList {
+                        vertical-stretch: 1;
+                        items: root.downloads;
+                        busy: root.downloading;
+                        cancel(id) => {
+                            root.cancel-download(id);
+                        }
+                        retry(id) => {
+                            root.retry-download(id);
+                        }
+                        show-in-folder(id) => {
+                            root.show-in-folder(id);
+                        }
+                    }
+
                     if root.current-page == 3: SettingsPage {
                         vertical-stretch: 1;
                         components: root.components;
                         checking: root.checking-components;
                         ready: root.components-ready;
                         download-folder: root.download-folder;
+                        separate-subfolders <=> root.separate-subfolders;
                         recheck-components => {
                             root.recheck-components();
                         }
                         choose-download-folder => {
                             root.choose-download-folder();
                         }
+                        open-setup => {
+                            WizardState.step = 1;
+                            WizardState.visible = true;
+                        }
+                        subfolders-toggled(checked) => {
+                            root.subfolders-toggled(checked);
+                        }
                     }
 
                     // Keadaan kosong (belum ada data)
-                    if root.current-page != 3: Rectangle {
+                    if root.current-page != 3 && !(root.current-page == 0 && root.downloads.length > 0): Rectangle {
                         vertical-stretch: 1;
 
                         VerticalLayout {
@@ -316,7 +385,7 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         spacing: 6px;
                         FieldLabel {
-                            text: "URL VIDEO";
+                            text: root.platform == 0 ? "URL YOUTUBE" : root.platform == 1 ? "URL FACEBOOK" : "URL INSTAGRAM";
                         }
 
                         HorizontalLayout {
@@ -324,7 +393,7 @@ export component AppWindow inherits Window {
                             url-field := InputField {
                                 horizontal-stretch: 1;
                                 icon: Icons.link;
-                                placeholder: "https://...";
+                                placeholder: root.platforms[root.platform].url-hint;
                             }
 
                             GhostButton {
@@ -333,6 +402,13 @@ export component AppWindow inherits Window {
                                     url-field.paste-from-clipboard();
                                 }
                             }
+                        }
+
+                        if root.url-feedback.message != "": Text {
+                            text: root.url-feedback.message;
+                            font-size: 11px;
+                            color: root.url-feedback.valid ? Theme.ok : Theme.warning;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -373,8 +449,18 @@ export component AppWindow inherits Window {
                                 text: root.download-mode == 0 ? "RESOLUSI MAKS." : "BITRATE";
                             }
 
-                            ValueRow {
-                                text: root.download-mode == 0 ? "Terbaik" : "192 kbps";
+                            Dropdown {
+                                options: root.download-mode == 0 ? root.video-quality-options : root.audio-bitrate-options;
+                                current-index: root.download-mode == 0 ? root.video-quality-index : root.audio-bitrate-index;
+                                selected(index) => {
+                                    if root.download-mode == 0 {
+                                        root.video-quality-index = index;
+                                        root.video-quality-changed(index);
+                                    } else {
+                                        root.audio-bitrate-index = index;
+                                        root.audio-bitrate-changed(index);
+                                    }
+                                }
                             }
                         }
                     }
@@ -401,12 +487,15 @@ export component AppWindow inherits Window {
                     }
 
                     PrimaryButton {
-                        text: "Unduh";
-                        enabled: false;
+                        text: root.downloading ? "Sedang mengunduh..." : "Unduh";
+                        enabled: root.can-download;
+                        clicked => {
+                            root.start-download();
+                        }
                     }
 
-                    Text {
-                        text: "Tombol Unduh dan pilihan format belum aktif. Fitur ini dikerjakan di fase berikutnya.";
+                    if root.download-hint != "": Text {
+                        text: root.download-hint;
                         font-size: 11px;
                         color: Theme.text-dim;
                         wrap: word-wrap;
@@ -432,9 +521,9 @@ export component AppWindow inherits Window {
             }
 
             Text {
-                text: "Tidak ada unduhan aktif";
+                text: root.downloading ? "1 unduhan berjalan" : "Tidak ada unduhan aktif";
                 font-size: 12px;
-                color: Theme.text-dim;
+                color: root.downloading ? Theme.info : Theme.text-dim;
                 vertical-alignment: center;
             }
 
@@ -444,6 +533,23 @@ export component AppWindow inherits Window {
                 color: Theme.text-dim;
                 vertical-alignment: center;
             }
+        }
+    }
+
+    // Wizard setup: lapisan di atas seluruh jendela.
+    if WizardState.visible: SetupWizard {
+        width: 100%;
+        height: 100%;
+        components: root.components;
+        checking: root.checking-components;
+        ready: root.components-ready;
+        download-folder: root.download-folder;
+        separate-subfolders <=> root.separate-subfolders;
+        choose-download-folder => {
+            root.choose-download-folder();
+        }
+        subfolders-toggled(checked) => {
+            root.subfolders-toggled(checked);
         }
     }
 }

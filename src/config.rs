@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::formats::DEFAULT_AUDIO_BITRATE;
+
 /// Nama folder data aplikasi di dalam `%APPDATA%` dan `%LOCALAPPDATA%`.
 pub const APP_DIR_NAME: &str = "DANload";
 
@@ -41,9 +43,9 @@ impl DownloadMode {
 
 /// Isi `config.json`.
 ///
-/// `#[serde(default)]` membuat kolom yang tidak ada di file diisi nilai bawaan,
-/// sehingga config lama tetap terbaca setelah aplikasi diperbarui.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// `#[serde(default)]` membuat kolom yang tidak ada di file diisi nilai bawaan
+/// (lihat `impl Default`), sehingga config lama tetap terbaca setelah aplikasi diperbarui.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// Folder tujuan unduhan. `None` berarti pengguna belum memilih,
@@ -51,8 +53,27 @@ pub struct Config {
     pub download_folder: Option<PathBuf>,
     /// Mode unduh terakhir (Video/Audio).
     pub download_mode: DownloadMode,
-    /// `true` setelah wizard setup awal selesai (dipakai mulai Fase 2B).
+    /// `true` setelah wizard setup awal selesai.
     pub setup_completed: bool,
+    /// Simpan video dan audio di subfolder terpisah (`Video\` dan `Audio\`).
+    pub separate_subfolders: bool,
+    /// Resolusi maksimum video terakhir (mis. 1080). `None` = terbaik.
+    pub video_max_height: Option<u32>,
+    /// Bitrate MP3 terakhir (kbps).
+    pub audio_bitrate_kbps: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            download_folder: None,
+            download_mode: DownloadMode::default(),
+            setup_completed: false,
+            separate_subfolders: false,
+            video_max_height: None,
+            audio_bitrate_kbps: DEFAULT_AUDIO_BITRATE,
+        }
+    }
 }
 
 impl Config {
@@ -86,6 +107,19 @@ impl Config {
         self.download_folder
             .clone()
             .unwrap_or_else(default_download_folder)
+    }
+
+    /// Folder tujuan untuk satu unduhan: folder unduhan, ditambah subfolder `Video`
+    /// atau `Audio` jika pilihan subfolder aktif.
+    pub fn target_folder(&self, mode: DownloadMode) -> PathBuf {
+        let folder = self.effective_download_folder();
+        if !self.separate_subfolders {
+            return folder;
+        }
+        folder.join(match mode {
+            DownloadMode::Video => "Video",
+            DownloadMode::Audio => "Audio",
+        })
     }
 }
 
@@ -150,6 +184,9 @@ mod tests {
             download_folder: Some(PathBuf::from("D:\\Video Saya\\Unduhan é")),
             download_mode: DownloadMode::Audio,
             setup_completed: true,
+            separate_subfolders: true,
+            video_max_height: Some(720),
+            audio_bitrate_kbps: 320,
         };
         config.save_to(&path).unwrap();
         assert_eq!(Config::load_from(&path), config);
@@ -188,6 +225,37 @@ mod tests {
                 .effective_download_folder()
                 .ends_with("Downloads/DANload")
         );
+    }
+
+    #[test]
+    fn old_config_gets_new_defaults() {
+        // config.json dari Fase 2A/2B belum punya kolom kualitas.
+        let dir = temp_dir("lama");
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            r#"{ "download_mode": "audio", "setup_completed": true, "separate_subfolders": true }"#,
+        )
+        .unwrap();
+        let config = Config::load_from(&path);
+        assert!(config.setup_completed);
+        assert_eq!(config.video_max_height, None);
+        assert_eq!(config.audio_bitrate_kbps, DEFAULT_AUDIO_BITRATE);
+    }
+
+    #[test]
+    fn target_folder_uses_subfolders_only_when_enabled() {
+        let mut config = Config {
+            download_folder: Some(PathBuf::from("D:\\Unduhan")),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.target_folder(DownloadMode::Audio),
+            PathBuf::from("D:\\Unduhan")
+        );
+        config.separate_subfolders = true;
+        assert!(config.target_folder(DownloadMode::Audio).ends_with("Audio"));
+        assert!(config.target_folder(DownloadMode::Video).ends_with("Video"));
     }
 
     #[test]

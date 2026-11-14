@@ -1,0 +1,432 @@
+// Wizard setup awal (CLAUDE.md Bagian 2.9). Tampil sebagai lapisan di atas jendela utama.
+//
+// Langkah:
+//   0. Selamat datang
+//   1. Komponen       - cek, pasang otomatis, atau pilih file manual
+//   2. Folder unduhan
+//   3. Selesai
+//
+// Hanya tampilan. Mengunduh dan memasang dilakukan di Rust (src/setup.rs lewat src/app.rs).
+
+import { Theme, Icons } from "theme.slint";
+import { Icon, PrimaryButton, GhostButton, Checkbox, ProgressBar } from "components.slint";
+import { ComponentInfo, ComponentState, StatusPill } from "settings-page.slint";
+
+// Keadaan wizard. Diisi dan ditangani dari Rust.
+export global WizardState {
+    in-out property <bool> visible;
+    in-out property <int> step;
+    // `true` selama pemasangan komponen berjalan.
+    in property <bool> installing;
+    // Kemajuan unduhan 0..1; nilai negatif berarti ukurannya tidak diketahui.
+    in property <float> progress;
+    in property <string> progress-text;
+    // Pesan kegagalan pemasangan terakhir (kosong = tidak ada).
+    in property <string> error;
+
+    // `all = false`: hanya komponen yang belum siap. `all = true`: semuanya (pasang ulang/perbarui).
+    callback install(all: bool);
+    callback cancel-install();
+    // Pilih file program sendiri (yt-dlp.exe, ffmpeg.exe, atau deno.exe).
+    callback pick-file();
+    // Pengguna menekan tombol terakhir di langkah Selesai.
+    callback finish();
+}
+
+// Baris ringkas satu komponen: nama, versi atau keterangan, dan statusnya.
+component CompactComponentRow inherits Rectangle {
+    in property <ComponentInfo> info;
+
+    height: 42px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.field;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 12px;
+
+        Text {
+            width: 64px;
+            text: root.info.name;
+            font-weight: 600;
+            color: Theme.text;
+            vertical-alignment: center;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.info.detail;
+            font-size: 12px;
+            color: root.info.state == ComponentState.broken ? Theme.warning : Theme.text-dim;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 0;
+            alignment: center;
+            StatusPill {
+                state: root.info.state;
+            }
+        }
+    }
+}
+
+// Satu baris ringkasan di langkah Selesai.
+component SummaryRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text;
+
+    spacing: 12px;
+
+    Text {
+        width: 120px;
+        text: root.label;
+        color: Theme.text-muted;
+    }
+
+    Text {
+        horizontal-stretch: 1;
+        text: root.value;
+        color: root.value-color;
+        overflow: elide;
+    }
+}
+
+export component SetupWizard inherits Rectangle {
+    in property <[ComponentInfo]> components;
+    in property <bool> checking;
+    in property <bool> ready;
+    in property <string> download-folder;
+    in-out property <bool> separate-subfolders;
+    callback choose-download-folder();
+    callback subfolders-toggled(checked: bool);
+
+    property <[string]> titles: ["Selamat datang di DANload", "Komponen", "Folder unduhan", "Semua sudah siap"];
+    // Tombol navigasi dimatikan selama pemasangan berjalan.
+    property <bool> busy: WizardState.installing;
+
+    background: #000000c0;
+
+    // Menahan klik supaya tidak tembus ke jendela utama di belakang wizard.
+    TouchArea { }
+
+    Rectangle {
+        width: min(600px, parent.width - 48px);
+        height: min(540px, parent.height - 40px);
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+
+        VerticalLayout {
+            padding: 28px;
+            spacing: 18px;
+
+            // ---------- Kepala ----------
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+
+                    Text {
+                        text: "LANGKAH " + (WizardState.step + 1) + " DARI 4";
+                        font-size: 10px;
+                        font-weight: 600;
+                        letter-spacing: 0.6px;
+                        color: Theme.text-dim;
+                    }
+
+                    Text {
+                        text: root.titles[WizardState.step];
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: Theme.text;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: start;
+                    GhostButton {
+                        height: 32px;
+                        text: "Nanti saja";
+                        enabled: !root.busy;
+                        clicked => {
+                            WizardState.visible = false;
+                        }
+                    }
+                }
+            }
+
+            // ---------- Isi: 0. Selamat datang ----------
+            if WizardState.step == 0: VerticalLayout {
+                vertical-stretch: 1;
+                alignment: start;
+                spacing: 12px;
+
+                Text {
+                    text: "DANload mengunduh video dan audio dari YouTube, Facebook, dan Instagram. Sebelum mulai, ada dua hal yang perlu disiapkan:";
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "1.  Komponen pendukung: yt-dlp, FFmpeg, dan Deno. DANload bisa memasangnya secara otomatis.";
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "2.  Folder tempat hasil unduhan disimpan.";
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "Pengaturan ini bisa diubah lagi kapan saja dari halaman Pengaturan.";
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+            }
+
+            // ---------- Isi: 1. Komponen ----------
+            if WizardState.step == 1: VerticalLayout {
+                vertical-stretch: 1;
+                alignment: start;
+                spacing: 8px;
+
+                for info in root.components: CompactComponentRow {
+                    info: info;
+                }
+
+                Rectangle {
+                    height: 4px;
+                }
+
+                // Sedang memasang: progress + tombol batal.
+                if WizardState.installing: VerticalLayout {
+                    spacing: 10px;
+
+                    Text {
+                        text: WizardState.progress-text;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+
+                    ProgressBar {
+                        value: WizardState.progress;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        GhostButton {
+                            text: "Batal";
+                            clicked => {
+                                WizardState.cancel-install();
+                            }
+                        }
+                    }
+                }
+
+                // Tidak sedang memasang: pesan + tombol aksi.
+                if !WizardState.installing: VerticalLayout {
+                    spacing: 10px;
+
+                    Text {
+                        text: WizardState.error != "" ? WizardState.error : root.checking ? "Memeriksa komponen di komputer ini..." : root.ready ? "Semua komponen sudah siap dipakai." : "Ada komponen yang belum siap. \"Pasang otomatis\" mengunduhnya dari sumber resmi. Unduhan FFmpeg dan Deno cukup besar, jadi bisa memakan beberapa menit.";
+                        color: WizardState.error != "" ? Theme.error : root.ready ? Theme.ok : Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+
+                        if !root.ready: PrimaryButton {
+                            width: 150px;
+                            height: 38px;
+                            text: WizardState.error != "" ? "Coba lagi" : "Pasang otomatis";
+                            enabled: !root.checking;
+                            clicked => {
+                                WizardState.install(false);
+                            }
+                        }
+
+                        if root.ready: GhostButton {
+                            text: "Pasang versi terbaru";
+                            clicked => {
+                                WizardState.install(true);
+                            }
+                        }
+
+                        GhostButton {
+                            text: "Pilih file sendiri...";
+                            clicked => {
+                                WizardState.pick-file();
+                            }
+                        }
+                    }
+
+                    if WizardState.error != "": Text {
+                        text: "Masih gagal? Unduh sendiri yt-dlp.exe (github.com/yt-dlp/yt-dlp), FFmpeg (ffmpeg.org), dan Deno (deno.com), lalu pasang lewat \"Pilih file sendiri...\".";
+                        font-size: 12px;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ---------- Isi: 2. Folder unduhan ----------
+            if WizardState.step == 2: VerticalLayout {
+                vertical-stretch: 1;
+                alignment: start;
+                spacing: 12px;
+
+                Text {
+                    text: "Pilih tempat menyimpan hasil unduhan.";
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 38px;
+                        border-radius: Theme.radius-small;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.field;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 8px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    width: 16px;
+                                    height: 16px;
+                                    commands: Icons.folder;
+                                    tint: Theme.text-dim;
+                                }
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.download-folder;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+
+                    GhostButton {
+                        text: "Ubah...";
+                        clicked => {
+                            root.choose-download-folder();
+                        }
+                    }
+                }
+
+                Checkbox {
+                    text: "Pisahkan ke subfolder Video dan Audio";
+                    checked <=> root.separate-subfolders;
+                    toggled(checked) => {
+                        root.subfolders-toggled(checked);
+                    }
+                }
+
+                Text {
+                    text: "Folder dibuat otomatis saat unduhan pertama.";
+                    font-size: 12px;
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
+                }
+            }
+
+            // ---------- Isi: 3. Selesai ----------
+            if WizardState.step == 3: VerticalLayout {
+                vertical-stretch: 1;
+                alignment: start;
+                spacing: 12px;
+
+                SummaryRow {
+                    label: "Komponen";
+                    value: root.ready ? "Siap dipakai" : "Belum lengkap (bisa dipasang nanti dari Pengaturan)";
+                    value-color: root.ready ? Theme.ok : Theme.warning;
+                }
+
+                SummaryRow {
+                    label: "Folder unduhan";
+                    value: root.download-folder;
+                }
+
+                SummaryRow {
+                    label: "Subfolder";
+                    value: root.separate-subfolders ? "Video dan Audio dipisah" : "Semua di satu folder";
+                }
+
+                if !root.ready: Text {
+                    text: "DANload belum bisa mengunduh sampai komponennya lengkap.";
+                    color: Theme.warning;
+                    wrap: word-wrap;
+                }
+            }
+
+            // ---------- Kaki: navigasi ----------
+            HorizontalLayout {
+                spacing: 8px;
+
+                if WizardState.step > 0: GhostButton {
+                    text: "Kembali";
+                    enabled: !root.busy;
+                    clicked => {
+                        WizardState.step -= 1;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                // Di langkah Komponen, lanjut tanpa komponen lengkap tetap boleh, tetapi diberi nama jelas.
+                if WizardState.step == 1 && !root.ready: GhostButton {
+                    text: "Lewati dulu";
+                    enabled: !root.busy;
+                    clicked => {
+                        WizardState.step += 1;
+                    }
+                }
+
+                if WizardState.step < 3 && !(WizardState.step == 1 && !root.ready): PrimaryButton {
+                    width: 130px;
+                    height: 38px;
+                    text: WizardState.step == 0 ? "Mulai" : "Lanjut";
+                    enabled: !root.busy;
+                    clicked => {
+                        WizardState.step += 1;
+                    }
+                }
+
+                if WizardState.step == 3: PrimaryButton {
+                    width: 190px;
+                    height: 38px;
+                    text: "Mulai pakai DANload";
+                    clicked => {
+                        WizardState.finish();
+                    }
+                }
+            }
+        }
+    }
+}
