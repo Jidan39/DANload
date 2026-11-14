@@ -1,0 +1,5 @@
+# Hasil build Cargo (besar, bisa dibuat ulang kapan saja)
+/target/
+
+# yt-dlp.exe dan ffmpeg.exe untuk pengujian lokal (tidak di-commit)
+/bin/

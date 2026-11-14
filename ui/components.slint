@@ -1,0 +1,373 @@
+// Komponen kecil yang dipakai berulang di tampilan DANload.
+// Hanya tampilan: tidak ada logika unduh di sini (lihat CLAUDE.md Bagian 6).
+
+import { Theme } from "theme.slint";
+
+// Ikon garis. Bentuknya diisi lewat `commands` (lihat `Icons` di theme.slint).
+export component Icon inherits Path {
+    in property <color> tint: Theme.text-muted;
+    width: 20px;
+    height: 20px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.tint;
+    stroke-width: 1.7px;
+    stroke-line-cap: round;
+    fill: transparent;
+}
+
+// Panel dengan sudut membulat: wadah dasar untuk sidebar, daftar, dan panel kanan.
+export component Panel inherits Rectangle {
+    background: Theme.panel;
+    border-radius: Theme.radius;
+}
+
+// Tombol di sidebar kiri: ikon + label kecil.
+export component NavButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active;
+    callback clicked;
+
+    height: 58px;
+    border-radius: Theme.radius-small;
+    background: root.active ? Theme.panel-raised : touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 5px;
+
+        HorizontalLayout {
+            alignment: center;
+            Icon {
+                commands: root.icon;
+                tint: root.active ? Theme.text : Theme.text-muted;
+            }
+        }
+
+        Text {
+            text: root.label;
+            font-size: 10px;
+            horizontal-alignment: center;
+            color: root.active ? Theme.text : Theme.text-muted;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// "Chip" filter berbentuk pil, mis. Semua / Video / Audio.
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked;
+
+    height: 30px;
+    border-radius: 15px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: root.selected ? Theme.accent : touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        Text {
+            text: root.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            color: root.selected ? Theme.accent-text : Theme.text-muted;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Penanda platform di bar atas. Nanti menyala otomatis sesuai URL (Fase 3 dan 5).
+export component PlatformBadge inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+
+    height: 30px;
+    border-radius: 15px;
+    background: root.active ? Theme.panel-raised : transparent;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 7px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.active ? Theme.ok : Theme.text-dim;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            color: root.active ? Theme.text : Theme.text-muted;
+        }
+    }
+}
+
+// Kolom isian teks satu baris dengan teks petunjuk (placeholder) dan ikon opsional.
+export component InputField inherits Rectangle {
+    in property <string> placeholder;
+    in property <string> icon;
+    in-out property <string> text <=> input.text;
+
+    // Menempelkan isi clipboard, menggantikan teks yang ada.
+    public function paste-from-clipboard() {
+        input.focus();
+        input.select-all();
+        input.paste();
+    }
+
+    height: 38px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.text-dim : Theme.border;
+    background: Theme.field;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                width: 16px;
+                height: 16px;
+                commands: root.icon;
+                tint: Theme.text-dim;
+            }
+        }
+
+        // `clip` memotong teks panjang supaya tidak keluar dari kolom.
+        viewport := Rectangle {
+            clip: true;
+
+            Text {
+                x: 0px;
+                width: parent.width;
+                visible: input.text == "";
+                text: root.placeholder;
+                color: Theme.text-dim;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            input := TextInput {
+                // Posisi geser horizontal, supaya kursor selalu terlihat pada teks panjang (mis. URL).
+                property <length> scroll-x: 0px;
+
+                x: min(0px, max(parent.width - self.width, self.scroll-x));
+                width: max(parent.width, self.preferred-width + 2px);
+                height: 100%;
+                color: Theme.text;
+                selection-background-color: #3d5a80;
+                selection-foreground-color: Theme.text;
+                vertical-alignment: center;
+                single-line: true;
+                accessible-placeholder-text: root.placeholder;
+
+                cursor-position-changed(position) => {
+                    if position.x + self.scroll-x < 0px {
+                        self.scroll-x = -position.x;
+                    } else if position.x + self.scroll-x > parent.width - 2px {
+                        self.scroll-x = parent.width - position.x - 2px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Tombol utama (warna aksen).
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    height: 42px;
+    border-radius: Theme.radius-small;
+    background: !root.enabled ? Theme.panel-raised : touch.has-hover ? Theme.accent.darker(8%) : Theme.accent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+
+    Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 600;
+        color: root.enabled ? Theme.accent-text : Theme.text-dim;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Tombol sekunder (garis tepi saja).
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+
+    height: 38px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        Text {
+            text: root.text;
+            font-size: 12px;
+            color: Theme.text;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Satu pilihan di dalam `Segmented`.
+component SegmentedItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked;
+
+    border-radius: 8px;
+    background: root.selected ? Theme.panel-raised : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+
+    Text {
+        text: root.text;
+        font-size: 12px;
+        font-weight: root.selected ? 600 : 400;
+        color: root.selected ? Theme.text : Theme.text-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Pilihan dua sisi, mis. Video | Audio.
+export component Segmented inherits Rectangle {
+    in property <string> first;
+    in property <string> second;
+    in-out property <int> selected-index: 0;
+
+    height: 38px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.field;
+
+    HorizontalLayout {
+        padding: 4px;
+        spacing: 4px;
+
+        SegmentedItem {
+            text: root.first;
+            selected: root.selected-index == 0;
+            clicked => {
+                root.selected-index = 0;
+            }
+        }
+
+        SegmentedItem {
+            text: root.second;
+            selected: root.selected-index == 1;
+            clicked => {
+                root.selected-index = 1;
+            }
+        }
+    }
+}
+
+// Judul kecil di atas sebuah isian, mis. "FORMAT".
+export component FieldLabel inherits Text {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    color: Theme.text-dim;
+}
+
+// Baris nilai yang belum bisa diubah (placeholder untuk pilihan format/kualitas/folder).
+export component ValueRow inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+
+    height: 38px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.field;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                width: 16px;
+                height: 16px;
+                commands: root.icon;
+                tint: Theme.text-dim;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
