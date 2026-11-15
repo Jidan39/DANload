@@ -3,8 +3,32 @@
 //! - [`hide_console_window`]: untuk perintah singkat (mis. membaca versi).
 //! - [`run_in_background`]: untuk pekerjaan berat (unduh dan konversi).
 //! - [`kill_tree`]: menghentikan sebuah proses beserta semua proses anaknya.
+//! - [`spawn_line_reader`]: membaca keluaran program baris demi baris di thread terpisah.
 
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::Sender;
+use std::thread::JoinHandle;
+
+/// Membaca `stream` baris demi baris di thread baru dan mengirim tiap baris (dibungkus `wrap`)
+/// lewat `sender`. Teks yang bukan UTF-8 yang sah tetap terbaca; `\r` di akhir baris dibuang.
+pub fn spawn_line_reader<T: Send + 'static>(
+    stream: impl Read + Send + 'static,
+    sender: Sender<T>,
+    wrap: fn(String) -> T,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        for chunk in BufReader::new(stream).split(b'\n') {
+            let Ok(bytes) = chunk else { break };
+            let line = String::from_utf8_lossy(&bytes)
+                .trim_end_matches('\r')
+                .to_string();
+            if sender.send(wrap(line)).is_err() {
+                break;
+            }
+        }
+    })
+}
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;

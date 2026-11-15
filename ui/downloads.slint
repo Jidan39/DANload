@@ -1,16 +1,22 @@
 // Daftar unduhan di halaman "Unduhan": satu kartu per unduhan pada sesi ini.
 // Hanya tampilan. Datanya diisi dan diperbarui dari Rust (src/app.rs).
-// Riwayat permanen (tetap ada setelah aplikasi ditutup) menyusul di Pustaka, Fase 6.
+// Riwayat permanen (tetap ada setelah aplikasi ditutup) ada di Pustaka (ui/library.slint), dan
+// unduhan yang belum dimulai ada di Antrean (ui/queue.slint).
+//
+// Catatan performa: daftar memakai ListView, jadi hanya kartu yang terlihat yang dibuat walaupun
+// sesi ini sudah mengunduh ratusan video dari playlist (CLAUDE.md Bagian 2.6).
 
 import { Theme, Icons } from "theme.slint";
 import { Icon, GhostButton, ProgressBar } from "components.slint";
-import { ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 
 // Keadaan satu unduhan.
 export enum DownloadState {
     preparing, // menjalankan yt-dlp dan mengambil info video
     downloading, // sedang mengunduh
-    processing, // menggabungkan/mengubah format dengan FFmpeg
+    processing, // diproses yt-dlp: menggabungkan video + audio, mengambil audio, memindahkan file
+    converting, // diubah ke format tujuan oleh DANload (FFmpeg), ada persentasenya
+    waiting, // menunggu giliran konversi (hanya satu konversi berat per waktu, sejak Fase 7)
     done, // selesai
     failed, // gagal
     cancelled, // dibatalkan pengguna
@@ -32,7 +38,7 @@ export struct DownloadItem {
 // Ikon bulat sesuai keadaan.
 component StateIcon inherits Rectangle {
     in property <DownloadState> state;
-    property <color> tint: root.state == DownloadState.done ? Theme.ok : root.state == DownloadState.failed ? Theme.error : root.state == DownloadState.cancelled ? Theme.text-dim : Theme.info;
+    property <color> tint: root.state == DownloadState.done ? Theme.ok : root.state == DownloadState.failed ? Theme.error : root.state == DownloadState.cancelled || root.state == DownloadState.waiting ? Theme.text-dim : Theme.info;
 
     width: 36px;
     height: 36px;
@@ -42,20 +48,19 @@ component StateIcon inherits Rectangle {
     Icon {
         width: 18px;
         height: 18px;
-        commands: root.state == DownloadState.done ? Icons.check : root.state == DownloadState.failed || root.state == DownloadState.cancelled ? Icons.close : Icons.download;
+        commands: root.state == DownloadState.done ? Icons.check : root.state == DownloadState.failed || root.state == DownloadState.cancelled ? Icons.close : root.state == DownloadState.waiting ? Icons.queue : Icons.download;
         tint: root.tint;
     }
 }
 
 component DownloadCard inherits Rectangle {
     in property <DownloadItem> item;
-    // `false` saat ada unduhan lain berjalan (hanya satu unduhan sekaligus).
-    in property <bool> can-retry: true;
     callback cancel();
     callback retry();
     callback show-in-folder();
 
-    property <bool> active: root.item.state == DownloadState.preparing || root.item.state == DownloadState.downloading || root.item.state == DownloadState.processing;
+    property <bool> active: root.item.state == DownloadState.preparing || root.item.state == DownloadState.downloading || root.item.state == DownloadState.processing || root.item.state == DownloadState.converting || root.item.state == DownloadState.waiting;
+    property <bool> show-progress: root.active && root.item.state != DownloadState.waiting;
 
     border-radius: Theme.radius-small;
     border-width: 1px;
@@ -92,11 +97,11 @@ component DownloadCard inherits Rectangle {
                 overflow: elide;
             }
 
-            if root.active: Rectangle {
+            if root.show-progress: Rectangle {
                 height: 4px;
             }
 
-            if root.active: ProgressBar {
+            if root.show-progress: ProgressBar {
                 value: root.item.state == DownloadState.processing ? 1.0 : root.item.progress;
             }
 
@@ -125,9 +130,9 @@ component DownloadCard inherits Rectangle {
                 }
             }
 
+            // Sejak Fase 7: unduhan dimasukkan lagi ke antrean (paling depan).
             if root.item.state == DownloadState.failed || root.item.state == DownloadState.cancelled: GhostButton {
                 text: "Coba lagi";
-                enabled: root.can-retry;
                 clicked => {
                     root.retry();
                 }
@@ -136,22 +141,18 @@ component DownloadCard inherits Rectangle {
     }
 }
 
-export component DownloadList inherits ScrollView {
+export component DownloadList inherits ListView {
     in property <[DownloadItem]> items;
-    // `true` saat ada unduhan berjalan.
-    in property <bool> busy;
     callback cancel(id: int);
     callback retry(id: int);
     callback show-in-folder(id: int);
 
-    VerticalLayout {
-        alignment: start;
-        spacing: 10px;
+    for item in root.items: VerticalLayout {
         padding-right: 14px;
+        padding-bottom: 10px;
 
-        for item in root.items: DownloadCard {
+        DownloadCard {
             item: item;
-            can-retry: !root.busy;
             cancel => {
                 root.cancel(item.id);
             }

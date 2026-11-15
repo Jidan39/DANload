@@ -1,0 +1,774 @@
+// Pustaka (CLAUDE.md Bagian 2.8): daftar file yang sudah diunduh, panel detail file terpilih,
+// dan dialog konfirmasi hapus. Hanya tampilan: datanya diisi dan semua aksinya ditangani di
+// Rust (src/app.rs, src/library.rs).
+//
+// Catatan performa: daftar memakai ListView, jadi hanya baris yang terlihat yang dibuat, dan
+// thumbnail hanya dibuka untuk baris itu (CLAUDE.md Bagian 2.6).
+
+import { Theme, Icons } from "theme.slint";
+import { Icon, Chip, GhostButton, PrimaryButton, InputField, FieldLabel, RowCheck } from "components.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+
+// Satu baris di daftar Pustaka.
+export struct LibraryRow {
+    // Nama file tanpa ekstensi.
+    name: string,
+    // mis. "YouTube · MP4 · 1080p · 45,2 MB · 3:25"
+    meta: string,
+    // mis. "15 Nov 19:40"
+    date: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    // `true` untuk file audio (ikon not musik jika tidak ada thumbnail).
+    audio: bool,
+    // File sudah tidak ada di lokasinya (dipindah/dihapus di luar DANload).
+    missing: bool,
+    // Dicentang untuk dihapus bersama.
+    checked: bool,
+    // Sedang dibuka di panel detail.
+    selected: bool,
+}
+
+// Isi panel detail file terpilih.
+export struct LibraryDetail {
+    // Nama file tanpa ekstensi untuk ditampilkan (nama panjang dipendekkan dengan "…"),
+    // nama lengkapnya (untuk kolom ganti nama), dan ekstensinya (mis. "mp4").
+    name: string,
+    full-name: string,
+    extension: string,
+    // Judul asli dari platform; kosong jika sama dengan nama file.
+    title: string,
+    platform: string,
+    // mis. "MP4 · 1080p"
+    format: string,
+    size: string,
+    duration: string,
+    // mis. "15 November 2026, 19:40"
+    date: string,
+    folder: string,
+    url: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    audio: bool,
+    missing: bool,
+}
+
+// Isi dialog konfirmasi hapus.
+export struct DeleteDialog {
+    visible: bool,
+    title: string,
+    message: string,
+    // `false` jika semua filenya sudah tidak ada: hanya bisa dihapus dari daftar.
+    can-recycle: bool,
+}
+
+// Gambar kecil: thumbnail, atau ikon video/audio jika tidak ada.
+component Thumbnail inherits Rectangle {
+    in property <image> source;
+    in property <bool> has-image;
+    in property <bool> audio;
+    in property <length> icon-size: 20px;
+
+    border-radius: 6px;
+    background: Theme.panel-raised;
+    clip: true;
+
+    if root.has-image: Image {
+        width: 100%;
+        height: 100%;
+        source: root.source;
+        image-fit: cover;
+    }
+
+    if !root.has-image: Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.icon-size;
+        height: root.icon-size;
+        commands: root.audio ? Icons.audio : Icons.video;
+        tint: Theme.text-dim;
+    }
+}
+
+
+// Satu baris file. Klik baris = buka detail; klik kotak centang = pilih untuk dihapus bersama.
+component LibraryRowView inherits Rectangle {
+    in property <LibraryRow> entry;
+    callback clicked();
+    callback toggled();
+
+    height: 64px;
+    border-radius: Theme.radius-small;
+    background: root.entry.selected ? Theme.panel-raised : touch.has-hover ? Theme.hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.entry.name;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 12px;
+        spacing: 10px;
+
+        VerticalLayout {
+            alignment: center;
+            RowCheck {
+                checked: root.entry.checked;
+                toggled => {
+                    root.toggled();
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Thumbnail {
+                width: 80px;
+                height: 45px;
+                source: root.entry.thumbnail;
+                has-image: root.entry.has-thumbnail;
+                audio: root.entry.audio;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+
+            Text {
+                text: root.entry.name;
+                font-size: 13px;
+                font-weight: 600;
+                color: root.entry.missing ? Theme.text-muted : Theme.text;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.entry.missing ? "File tidak ditemukan · " + root.entry.meta : root.entry.meta;
+                font-size: 11px;
+                color: root.entry.missing ? Theme.warning : Theme.text-dim;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: root.entry.date;
+            font-size: 11px;
+            color: Theme.text-dim;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Isi halaman Pustaka di bawah judul: chip filter, bar pilihan, dan daftar file.
+export component LibraryPage inherits VerticalLayout {
+    in property <[LibraryRow]> rows;
+    // Jumlah semua file di Pustaka (sebelum disaring).
+    in property <int> total;
+    // Filter jenis: 0 = semua, 1 = video, 2 = audio.
+    in property <int> kind;
+    // Filter platform: 0 = semua, 1 = YouTube, 2 = Facebook, 3 = Instagram.
+    in property <int> platform;
+    // Jumlah file yang dicentang.
+    in property <int> checked-count;
+    // `true` saat sedang menghapus (tombol Hapus dimatikan).
+    in property <bool> busy;
+    callback filter-changed(kind: int, platform: int);
+    callback row-clicked(index: int);
+    callback row-toggled(index: int);
+    callback check-all();
+    callback clear-checks();
+    callback delete-checked();
+
+    property <[string]> platform-names: ["YouTube", "Facebook", "Instagram"];
+
+    spacing: 12px;
+
+    // Baris atas: chip filter, atau bar pilihan saat ada file yang dicentang. Keduanya memakai
+    // tempat yang sama, jadi daftar di bawahnya tidak bergeser saat file pertama dicentang.
+    Rectangle {
+        height: 30px;
+
+        // Chip jenis dan platform bisa digabung (mis. Video + YouTube). Klik chip yang sedang
+        // aktif untuk mematikannya; "Semua" mematikan keduanya.
+        if root.checked-count == 0: HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+
+            Chip {
+                text: "Semua";
+                selected: root.kind == 0 && root.platform == 0;
+                clicked => {
+                    root.filter-changed(0, 0);
+                }
+            }
+
+            Chip {
+                text: "Video";
+                selected: root.kind == 1;
+                clicked => {
+                    root.filter-changed(root.kind == 1 ? 0 : 1, root.platform);
+                }
+            }
+
+            Chip {
+                text: "Audio";
+                selected: root.kind == 2;
+                clicked => {
+                    root.filter-changed(root.kind == 2 ? 0 : 2, root.platform);
+                }
+            }
+
+            for name[index] in root.platform-names: Chip {
+                text: name;
+                selected: root.platform == index + 1;
+                clicked => {
+                    root.filter-changed(root.kind, root.platform == index + 1 ? 0 : index + 1);
+                }
+            }
+        }
+
+        if root.checked-count > 0: Rectangle {
+            border-radius: 15px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.panel-raised;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 2px;
+                spacing: 4px;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.checked-count + " file dipilih";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    GhostButton {
+                        height: 26px;
+                        border-radius: 13px;
+                        text: "Pilih semua";
+                        clicked => {
+                            root.check-all();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    GhostButton {
+                        height: 26px;
+                        border-radius: 13px;
+                        text: "Hapus...";
+                        danger: true;
+                        enabled: !root.busy;
+                        clicked => {
+                            root.delete-checked();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    GhostButton {
+                        height: 26px;
+                        border-radius: 13px;
+                        text: "Batal";
+                        clicked => {
+                            root.clear-checks();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.rows.length > 0: ListView {
+        vertical-stretch: 1;
+
+        for row[index] in root.rows: Rectangle {
+            height: 68px;
+
+            LibraryRowView {
+                y: 2px;
+                width: parent.width - 14px;
+                entry: row;
+                clicked => {
+                    root.row-clicked(index);
+                }
+                toggled => {
+                    root.row-toggled(index);
+                }
+            }
+        }
+    }
+
+    // Keadaan kosong: Pustaka belum berisi apa-apa, atau tidak ada yang cocok dengan pencarian.
+    if root.rows.length == 0: Rectangle {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 28px;
+                    background: Theme.panel-raised;
+                    Icon {
+                        width: 24px;
+                        height: 24px;
+                        commands: root.total == 0 ? Icons.library : Icons.search;
+                    }
+                }
+            }
+
+            Text {
+                text: root.total == 0 ? "Pustaka masih kosong" : "Tidak ada yang cocok";
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: root.total == 0 ? "File yang diunduh mulai sekarang akan muncul di sini." : "Coba kata lain, atau ubah filternya.";
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+// Satu baris info di panel detail, mis. "Ukuran   45,2 MB".
+component InfoRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+
+    spacing: 10px;
+
+    Text {
+        width: 72px;
+        text: root.label;
+        font-size: 12px;
+        color: Theme.text-dim;
+    }
+
+    Text {
+        horizontal-stretch: 1;
+        text: root.value;
+        font-size: 12px;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+}
+
+// Kolom ganti nama di panel detail. Nama lama sudah terisi; ekstensi tidak bisa diubah.
+component RenameBox inherits VerticalLayout {
+    in property <string> initial;
+    in property <string> extension;
+    in property <bool> busy;
+    // Memeriksa nama; hasilnya pesan masalah, atau kosong jika boleh dipakai.
+    pure callback check(name: string) -> string;
+    callback save(name: string);
+    callback cancel();
+
+    property <string> error: root.check(field.text);
+
+    spacing: 6px;
+
+    // Kolom langsung aktif dengan seluruh nama terpilih, jadi bisa langsung diketik ulang.
+    init => {
+        field.focus();
+        field.select-all();
+    }
+
+    FieldLabel {
+        text: "NAMA BARU";
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        field := InputField {
+            horizontal-stretch: 1;
+            placeholder: "Nama file";
+            text: root.initial;
+        }
+
+        Text {
+            text: "." + root.extension;
+            color: Theme.text-dim;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.error != "": Text {
+        text: root.error;
+        font-size: 11px;
+        color: Theme.warning;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        PrimaryButton {
+            horizontal-stretch: 1;
+            height: 36px;
+            text: "Simpan";
+            enabled: root.error == "" && !root.busy;
+            clicked => {
+                root.save(field.text);
+            }
+        }
+
+        GhostButton {
+            horizontal-stretch: 1;
+            height: 36px;
+            text: "Batal";
+            clicked => {
+                root.cancel();
+            }
+        }
+    }
+}
+
+// Panel kanan saat sebuah file di Pustaka dipilih: thumbnail besar, info, dan tombol aksi.
+export component LibraryDetailPanel inherits Rectangle {
+    in property <LibraryDetail> detail;
+    // `true` saat sedang menghapus (tombol aksi dimatikan).
+    in property <bool> busy;
+    // Mode ganti nama (kolom nama tampil). Diatur di sini dan dikembalikan Rust setelah berhasil.
+    in-out property <bool> renaming;
+    // Memeriksa nama baru; hasilnya pesan masalah, atau kosong jika boleh dipakai.
+    pure callback check-rename(name: string) -> string;
+    callback close();
+    callback open-file();
+    callback show-in-folder();
+    callback rename(name: string);
+    // Link sumber sudah disalin ke clipboard (untuk pesan di status bar).
+    callback copied();
+    callback redownload();
+    callback delete();
+
+    // Menyalin teks ke clipboard lewat TextInput tersembunyi (cara bawaan Slint).
+    function copy-to-clipboard(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+    }
+
+    clipboard := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
+
+    ScrollView {
+        VerticalLayout {
+            padding: 20px;
+            padding-right: 22px;
+            spacing: 8px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Detail file";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: close-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: button;
+                    accessible-label: "Tutup detail";
+
+                    Icon {
+                        x: 6px;
+                        y: 6px;
+                        width: 16px;
+                        height: 16px;
+                        commands: Icons.close;
+                    }
+
+                    close-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.close();
+                        }
+                    }
+                }
+            }
+
+            Thumbnail {
+                // 16:9 dari lebar isi panel (320 - 20 - 22 piksel).
+                height: 156px;
+                source: root.detail.thumbnail;
+                has-image: root.detail.has-thumbnail;
+                audio: root.detail.audio;
+                icon-size: 36px;
+            }
+
+            // Nama file, atau kolom ganti nama.
+            if !root.renaming: VerticalLayout {
+                spacing: 4px;
+
+                // Nama dan judul yang panjang (mis. teks postingan Facebook) sudah dipendekkan
+                // Rust, supaya tombol aksi tetap terlihat.
+                Text {
+                    text: root.detail.name + "." + root.detail.extension;
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+
+                if root.detail.title != "": Text {
+                    text: root.detail.title;
+                    font-size: 11px;
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.renaming: RenameBox {
+                initial: root.detail.full-name;
+                extension: root.detail.extension;
+                busy: root.busy;
+                check(name) => {
+                    return root.check-rename(name);
+                }
+                save(name) => {
+                    root.rename(name);
+                }
+                cancel => {
+                    root.renaming = false;
+                }
+            }
+
+            if root.detail.missing: Rectangle {
+                border-radius: Theme.radius-small;
+                background: Theme.warning.with-alpha(0.12);
+
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: start;
+                        Icon {
+                            width: 16px;
+                            height: 16px;
+                            commands: Icons.warning;
+                            tint: Theme.warning;
+                        }
+                    }
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "File tidak ditemukan di lokasi ini. Mungkin sudah dipindah atau dihapus di luar DANload.";
+                        font-size: 12px;
+                        color: Theme.warning;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                InfoRow {
+                    label: "Platform";
+                    value: root.detail.platform;
+                }
+
+                InfoRow {
+                    label: "Format";
+                    value: root.detail.format;
+                }
+
+                InfoRow {
+                    label: "Ukuran";
+                    value: root.detail.size;
+                }
+
+                InfoRow {
+                    label: "Durasi";
+                    value: root.detail.duration;
+                }
+
+                InfoRow {
+                    label: "Diunduh";
+                    value: root.detail.date;
+                }
+
+                InfoRow {
+                    label: "Lokasi";
+                    value: root.detail.folder;
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+
+            if !root.detail.missing && !root.renaming: PrimaryButton {
+                height: 36px;
+                text: "Buka";
+                clicked => {
+                    root.open-file();
+                }
+            }
+
+            if !root.detail.missing && !root.renaming: HorizontalLayout {
+                spacing: 8px;
+                GhostButton {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    text: "Tampilkan di folder";
+                    clicked => {
+                        root.show-in-folder();
+                    }
+                }
+
+                GhostButton {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    text: "Ganti nama";
+                    enabled: !root.busy;
+                    clicked => {
+                        root.renaming = true;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                GhostButton {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    text: "Salin link sumber";
+                    enabled: root.detail.url != "";
+                    clicked => {
+                        root.copy-to-clipboard(root.detail.url);
+                        root.copied();
+                    }
+                }
+
+                GhostButton {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    text: "Unduh ulang";
+                    enabled: root.detail.url != "";
+                    clicked => {
+                        root.redownload();
+                    }
+                }
+            }
+
+            GhostButton {
+                height: 32px;
+                text: root.detail.missing ? "Hapus dari daftar..." : "Hapus...";
+                danger: true;
+                enabled: !root.busy;
+                clicked => {
+                    root.delete();
+                }
+            }
+        }
+    }
+}
+
+// Dialog konfirmasi hapus: lapisan gelap di atas seluruh jendela.
+export component DeleteDialogView inherits Rectangle {
+    in property <DeleteDialog> dialog;
+    callback confirm(recycle: bool);
+    callback cancel();
+
+    background: #000000a6;
+
+    // Menahan klik supaya tidak tembus ke tampilan di belakang dialog.
+    TouchArea { }
+
+    card := Rectangle {
+        width: min(440px, parent.width - 40px);
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+
+        content := VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+
+            Text {
+                text: root.dialog.title;
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.dialog.message;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                height: 4px;
+            }
+
+            if root.dialog.can-recycle: PrimaryButton {
+                height: 38px;
+                text: "Pindahkan ke Recycle Bin";
+                danger: true;
+                clicked => {
+                    root.confirm(true);
+                }
+            }
+
+            GhostButton {
+                height: 36px;
+                text: root.dialog.can-recycle ? "Hapus dari daftar saja" : "Hapus dari daftar";
+                clicked => {
+                    root.confirm(false);
+                }
+            }
+
+            GhostButton {
+                height: 36px;
+                text: "Batal";
+                clicked => {
+                    root.cancel();
+                }
+            }
+        }
+    }
+}

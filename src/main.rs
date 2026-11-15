@@ -3,24 +3,36 @@
 //! Pembagian modul:
 //! - `app`        : penghubung tampilan (Slint) dengan logika
 //! - `config`     : pengaturan yang disimpan di config.json
+//! - `convert`    : langkah konversi DANload dengan FFmpeg (WEBM, MOV, AVI, MPEG)
 //! - `deps`       : mencari yt-dlp, FFmpeg, ffprobe, dan Deno
 //! - `downloader` : menjalankan yt-dlp untuk satu unduhan dan membaca kemajuannya
-//! - `formats`    : pilihan format (MP4/MP3) dan argumen yt-dlp-nya
+//! - `filename`   : nama file kustom dan nama unik (`nama (2).mp4`) di folder unduhan
+//! - `formats`    : pilihan format video/audio, kualitasnya, dan argumen yt-dlp-nya
+//! - `library`    : Pustaka: daftar file yang sudah diunduh (cari, ganti nama, hapus)
 //! - `platform`   : platform terpilih (YouTube/Facebook/Instagram) dan pengecekan URL
+//! - `playlist`   : membaca isi playlist YouTube (`--flat-playlist`) untuk dipilih videonya
 //! - `process`    : menjalankan program eksternal tanpa console, prioritas rendah, kill tree
+//! - `queue`      : antrean unduhan: giliran (maks. 3, Instagram 1), simpan/muat queue.json
 //! - `setup`      : mengunduh dan memasang komponen (dipakai wizard setup)
+//! - `system`     : fungsi Windows: Recycle Bin, buka file, jam lokal (satu-satunya kode `unsafe`)
 
 // Di build rilis, jangan munculkan jendela console hitam di belakang aplikasi.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod config;
+mod convert;
 mod deps;
 mod downloader;
+mod filename;
 mod formats;
+mod library;
 mod platform;
+mod playlist;
 mod process;
+mod queue;
 mod setup;
+mod system;
 
 // Memasukkan kode Rust hasil kompilasi file `.slint` (dibuat oleh build.rs).
 // Dari sinilah tipe `AppWindow`, `ComponentInfo`, `WizardState`, dan lainnya berasal.

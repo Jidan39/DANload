@@ -1,0 +1,525 @@
+// Antrean (sejak Fase 7): unduhan yang menunggu giliran, dialog memilih video dari playlist, dan
+// dialog konfirmasi. Hanya tampilan: datanya diisi dan semua aksinya ditangani di Rust
+// (src/app.rs, src/queue.rs, src/playlist.rs).
+//
+// Catatan performa: daftar antrean dan isi playlist memakai ListView, jadi hanya baris yang
+// terlihat yang dibuat walaupun isinya ratusan video (CLAUDE.md Bagian 2.6).
+
+import { Theme, Icons } from "theme.slint";
+import { Icon, GhostButton, PrimaryButton, RowCheck } from "components.slint";
+import { ListView } from "std-widgets.slint";
+
+// Satu unduhan di antrean.
+export struct QueueRow {
+    id: int,
+    // Judul video, atau link-nya jika judulnya belum diketahui.
+    title: string,
+    // mis. "YouTube · MP4 · 1080p"
+    subtitle: string,
+}
+
+component QueueRowView inherits Rectangle {
+    in property <QueueRow> entry;
+    // Urutan giliran, mulai dari 1.
+    in property <int> number;
+    callback remove();
+
+    height: 56px;
+    border-radius: Theme.radius-small;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.field;
+    accessible-role: list-item;
+    accessible-label: root.entry.title;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 12px;
+
+        Text {
+            min-width: 24px;
+            text: root.number;
+            font-size: 12px;
+            color: Theme.text-dim;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+
+            Text {
+                text: root.entry.title;
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.entry.subtitle;
+                font-size: 11px;
+                color: Theme.text-dim;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            GhostButton {
+                height: 30px;
+                text: "Hapus";
+                clicked => {
+                    root.remove();
+                }
+            }
+        }
+    }
+}
+
+// Isi halaman Antrean di bawah judul: keterangan, tombol Jeda/Lanjutkan dan Kosongkan, lalu daftar.
+export component QueuePage inherits VerticalLayout {
+    in property <[QueueRow]> rows;
+    in property <bool> paused;
+    // `false` saat komponen belum siap: antrean belum bisa berjalan.
+    in property <bool> ready: true;
+    callback toggle-pause();
+    callback remove(id: int);
+    callback clear();
+
+    spacing: 12px;
+
+    // Tingginya sama dengan baris chip di halaman lain, supaya judul tidak bergeser.
+    HorizontalLayout {
+        height: 30px;
+        spacing: 8px;
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.paused ? "Antrean dijeda. Unduhan yang sedang berjalan tetap diselesaikan." : !root.ready ? "Menunggu komponen siap (lihat Pengaturan)." : root.rows.length > 0 ? "Unduhan dimulai otomatis sesuai urutan." : "";
+            font-size: 12px;
+            color: root.paused || !root.ready ? Theme.warning : Theme.text-muted;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        GhostButton {
+            height: 30px;
+            text: root.paused ? "Lanjutkan" : "Jeda";
+            clicked => {
+                root.toggle-pause();
+            }
+        }
+
+        GhostButton {
+            height: 30px;
+            text: "Kosongkan";
+            danger: true;
+            enabled: root.rows.length > 0;
+            clicked => {
+                root.clear();
+            }
+        }
+    }
+
+    if root.rows.length > 0: ListView {
+        vertical-stretch: 1;
+
+        for row[index] in root.rows: Rectangle {
+            height: 62px;
+
+            QueueRowView {
+                y: 0px;
+                width: parent.width - 14px;
+                entry: row;
+                number: index + 1;
+                remove => {
+                    root.remove(row.id);
+                }
+            }
+        }
+    }
+
+    if root.rows.length == 0: Rectangle {
+        vertical-stretch: 1;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 28px;
+                    background: Theme.panel-raised;
+                    Icon {
+                        width: 24px;
+                        height: 24px;
+                        commands: Icons.queue;
+                    }
+                }
+            }
+
+            Text {
+                text: "Antrean kosong";
+                font-size: 15px;
+                font-weight: 600;
+                color: Theme.text;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Unduhan yang menunggu giliran muncul di sini, mis. video dari playlist atau unduhan baru saat slot penuh.";
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+// Satu video di dialog pilih video.
+export struct PlaylistEntry {
+    title: string,
+    // Durasi (mis. "3:35"), atau alasan tidak bisa diunduh (mis. "Video privat").
+    meta: string,
+    // `false` jika video ini tidak bisa diunduh (tidak bisa dicentang).
+    available: bool,
+    checked: bool,
+}
+
+// Isi dialog pilih video dari playlist.
+export struct PlaylistDialog {
+    visible: bool,
+    // Sedang membaca isi playlist.
+    loading: bool,
+    // Judul playlist (kosong selama belum diketahui).
+    title: string,
+    // Kemajuan membaca, pesan gagal, atau catatan (mis. sebagian isi tidak terbaca).
+    message: string,
+    // `true` jika playlist gagal dibaca (`message` berisi alasannya).
+    error: bool,
+    // Jumlah video yang dicentang, dan yang bisa diunduh.
+    checked: int,
+    available: int,
+    // Format tujuan, mis. "MP4 · 1080p".
+    format: string,
+}
+
+component PlaylistEntryView inherits Rectangle {
+    in property <PlaylistEntry> entry;
+    in property <int> number;
+    callback toggled();
+
+    height: 44px;
+    border-radius: 8px;
+    background: root.entry.available && touch.has-hover ? Theme.hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.entry.title;
+
+    touch := TouchArea {
+        enabled: root.entry.available;
+        mouse-cursor: root.entry.available ? pointer : default;
+        clicked => {
+            root.toggled();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 2px;
+        padding-right: 10px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            RowCheck {
+                checked: root.entry.checked;
+                enabled: root.entry.available;
+                toggled => {
+                    root.toggled();
+                }
+            }
+        }
+
+        Text {
+            min-width: 26px;
+            text: root.number;
+            font-size: 11px;
+            color: Theme.text-dim;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.entry.title;
+            color: root.entry.available ? Theme.text : Theme.text-dim;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.entry.meta;
+            font-size: 11px;
+            color: root.entry.available ? Theme.text-dim : Theme.warning;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Dialog pilih video: lapisan di atas seluruh jendela.
+export component PlaylistDialogView inherits Rectangle {
+    in property <PlaylistDialog> dialog;
+    in property <[PlaylistEntry]> entries;
+    callback toggled(index: int);
+    callback check-all();
+    callback clear-checks();
+    callback confirm();
+    callback cancel();
+
+    background: #000000a6;
+
+    // Menahan klik supaya tidak tembus ke tampilan di belakang dialog.
+    TouchArea { }
+
+    Rectangle {
+        width: min(640px, parent.width - 40px);
+        height: root.dialog.loading || root.dialog.error ? small.preferred-height : min(600px, parent.height - 40px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+
+        // Saat membaca, atau jika gagal dibaca.
+        small := VerticalLayout {
+            visible: root.dialog.loading || root.dialog.error;
+            padding: 22px;
+            spacing: 12px;
+
+            Text {
+                text: root.dialog.error ? "Playlist gagal dibaca" : "Membaca playlist";
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.text;
+            }
+
+            Text {
+                text: root.dialog.message;
+                color: root.dialog.error ? Theme.error : Theme.text-muted;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                height: 4px;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                GhostButton {
+                    text: root.dialog.error ? "Tutup" : "Batal";
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+            }
+        }
+
+        // Isi playlist sudah terbaca: pilih videonya.
+        if !root.dialog.loading && !root.dialog.error: VerticalLayout {
+            padding: 22px;
+            padding-bottom: 18px;
+            spacing: 12px;
+
+            VerticalLayout {
+                spacing: 4px;
+
+                Text {
+                    text: "Pilih video dari playlist";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Theme.text;
+                }
+
+                Text {
+                    text: root.dialog.title;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+
+            HorizontalLayout {
+                height: 30px;
+                spacing: 8px;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.dialog.checked + " dari " + root.dialog.available + " video dipilih";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+
+                GhostButton {
+                    height: 30px;
+                    text: "Pilih semua";
+                    enabled: root.dialog.checked < root.dialog.available;
+                    clicked => {
+                        root.check-all();
+                    }
+                }
+
+                GhostButton {
+                    height: 30px;
+                    text: "Kosongkan";
+                    enabled: root.dialog.checked > 0;
+                    clicked => {
+                        root.clear-checks();
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Theme.radius-small;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.field;
+
+                ListView {
+                    x: 4px;
+                    y: 4px;
+                    width: parent.width - 8px;
+                    height: parent.height - 8px;
+
+                    for entry[index] in root.entries: Rectangle {
+                        height: 44px;
+
+                        PlaylistEntryView {
+                            y: 0px;
+                            width: parent.width - 14px;
+                            entry: entry;
+                            number: index + 1;
+                            toggled => {
+                                root.toggled(index);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.dialog.message != "": Text {
+                text: root.dialog.message;
+                font-size: 11px;
+                color: Theme.warning;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: "Format: " + root.dialog.format + ". Nama file mengikuti judul tiap video. Video privat, dihapus, atau belum tayang tidak bisa dipilih.";
+                font-size: 11px;
+                color: Theme.text-dim;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                GhostButton {
+                    text: "Batal";
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+
+                PrimaryButton {
+                    width: 230px;
+                    height: 38px;
+                    text: root.dialog.checked > 0 ? "Tambah " + root.dialog.checked + " video ke antrean" : "Pilih minimal 1 video";
+                    enabled: root.dialog.checked > 0;
+                    clicked => {
+                        root.confirm();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Isi dialog konfirmasi umum (mis. "Batal semua", "Kosongkan antrean").
+export struct ConfirmDialog {
+    visible: bool,
+    title: string,
+    message: string,
+    // Teks tombol konfirmasi (tombol merah), mis. "Batalkan semua".
+    confirm: string,
+}
+
+export component ConfirmDialogView inherits Rectangle {
+    in property <ConfirmDialog> dialog;
+    callback confirm();
+    callback cancel();
+
+    background: #000000a6;
+
+    TouchArea { }
+
+    Rectangle {
+        width: min(440px, parent.width - 40px);
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+
+        content := VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+
+            Text {
+                text: root.dialog.title;
+                font-size: 16px;
+                font-weight: 700;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.dialog.message;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                height: 4px;
+            }
+
+            PrimaryButton {
+                height: 38px;
+                text: root.dialog.confirm;
+                danger: true;
+                clicked => {
+                    root.confirm();
+                }
+            }
+
+            GhostButton {
+                height: 36px;
+                text: "Kembali";
+                clicked => {
+                    root.cancel();
+                }
+            }
+        }
+    }
+}

@@ -1,8 +1,9 @@
-// Halaman Pengaturan: status komponen (yt-dlp, FFmpeg, ffprobe) dan folder unduhan.
+// Halaman Pengaturan: status komponen (yt-dlp, FFmpeg, ffprobe, Deno), folder unduhan, dan jumlah
+// unduhan yang boleh berjalan bersamaan (sejak Fase 7).
 // Hanya tampilan. Pemeriksaan komponen dan penyimpanan dilakukan di Rust (src/app.rs).
 
 import { Theme, Icons } from "theme.slint";
-import { Icon, GhostButton, Checkbox } from "components.slint";
+import { Icon, GhostButton, Checkbox, Dropdown } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // Keadaan satu komponen.
@@ -154,11 +155,14 @@ export component SettingsPage inherits ScrollView {
     in property <string> download-folder;
     // Simpan video dan audio di subfolder terpisah (Video\ dan Audio\).
     in-out property <bool> separate-subfolders;
+    // Unduhan bersamaan: 0 = 1 unduhan, 1 = 2 unduhan, 2 = 3 unduhan.
+    in property <int> parallel-index: 2;
     callback recheck-components();
     callback choose-download-folder();
     // Membuka wizard setup di langkah pemasangan komponen.
     callback open-setup();
     callback subfolders-toggled(checked: bool);
+    callback parallel-changed(index: int);
 
     // Isi halaman bisa digulir kalau jendela terlalu pendek.
     VerticalLayout {
@@ -268,6 +272,28 @@ export component SettingsPage inherits ScrollView {
             checked <=> root.separate-subfolders;
             toggled(checked) => {
                 root.subfolders-toggled(checked);
+            }
+        }
+
+        Rectangle {
+            height: 10px;
+        }
+
+        // ---------- Unduhan bersamaan ----------
+        SectionHeader {
+            title: "Unduhan bersamaan";
+            description: "Paling banyak berapa unduhan berjalan sekaligus; sisanya menunggu di Antrean. Instagram selalu satu per satu, dan konversi berat (mis. ke WEBM atau AVI) juga bergiliran supaya komputer tetap ringan.";
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            Dropdown {
+                width: 200px;
+                options: ["1 unduhan", "2 unduhan", "3 unduhan"];
+                current-index: root.parallel-index;
+                selected(index) => {
+                    root.parallel-changed(index);
+                }
             }
         }
     }

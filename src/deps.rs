@@ -7,6 +7,7 @@
 //!
 //! Modul ini tidak bergantung pada GUI, jadi bisa diuji sendiri (`cargo test`).
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -204,7 +205,7 @@ pub fn is_at_least(version: &str, minimum: &str) -> bool {
 
 /// Menjalankan komponen dengan argumen versi dan mengambil nomor versinya.
 fn read_version(component: Component, path: &Path) -> Result<String, String> {
-    let output = run_capture(path, &[component.version_arg()], VERSION_TIMEOUT)?;
+    let output = run_capture(path, [component.version_arg()], VERSION_TIMEOUT)?;
     parse_version(component, &output).ok_or_else(|| "Jawaban program tidak dikenali.".to_string())
 }
 
@@ -239,11 +240,20 @@ pub fn parse_version(component: Component, output: &str) -> Option<String> {
     }
 }
 
-/// Menjalankan program dan mengembalikan teks keluarannya (stdout).
+/// Menjalankan program singkat (mis. perintah versi atau ffprobe) dan mengembalikan teks
+/// keluarannya (stdout). Program dihentikan jika tidak selesai dalam `timeout`.
 ///
 /// Argumen diberikan sebagai daftar terpisah (bukan satu string shell),
 /// sehingga path berisi spasi atau karakter aneh tetap aman.
-fn run_capture(program: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+pub(crate) fn run_capture<I, S>(
+    program: &Path,
+    args: I,
+    timeout: Duration,
+) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let mut command = Command::new(program);
     command
         .args(args)
@@ -256,7 +266,18 @@ fn run_capture(program: &Path, args: &[&str], timeout: Duration) -> Result<Strin
         .spawn()
         .map_err(|error| format!("Tidak bisa dijalankan: {error}"))?;
 
-    // Tunggu sampai selesai, tetapi jangan selamanya: kalau macet, hentikan.
+    // Stdout dibaca di thread lain selagi program berjalan. Kalau baru dibaca setelah program
+    // selesai, program bisa macet sendiri saat keluarannya melebihi kapasitas pipe.
+    let stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.map(|mut stdout| stdout.read_to_end(&mut bytes));
+        (bytes, result)
+    });
+
+    // Tunggu sampai selesai, tetapi jangan selamanya: kalau macet, hentikan. Saat dihentikan,
+    // thread pembaca tidak ditunggu, karena proses anak yang tertinggal bisa membuat pipe-nya
+    // tetap terbuka; thread itu selesai sendiri begitu pipe tertutup.
     let started = Instant::now();
     let exit_status = loop {
         match child.try_wait() {
@@ -271,14 +292,12 @@ fn run_capture(program: &Path, args: &[&str], timeout: Duration) -> Result<Strin
         }
     };
 
-    // Keluaran perintah versi sangat pendek, jadi aman dibaca setelah program selesai.
-    let mut bytes = Vec::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        stdout
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("Gagal membaca jawaban program: {error}"))?;
+    let (bytes, result) = reader
+        .join()
+        .map_err(|_| "Gagal membaca jawaban program.".to_string())?;
+    if let Some(Err(error)) = result {
+        return Err(format!("Gagal membaca jawaban program: {error}"));
     }
-
     if !exit_status.success() {
         return Err(format!("Program berhenti dengan {exit_status}."));
     }

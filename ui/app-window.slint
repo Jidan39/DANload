@@ -1,10 +1,12 @@
-// Jendela utama DANload (Fase 3: unduh YouTube MP4/MP3, Pengaturan, wizard setup).
+// Jendela utama DANload (Fase 7: unduh dari YouTube, Facebook, dan Instagram dalam berbagai
+// format video/audio, nama file bisa diatur, Pustaka, playlist YouTube, Antrean dengan beberapa
+// unduhan bersamaan, Pengaturan, wizard setup).
 //
 // Tata letak mengikuti CLAUDE.md Bagian 2.7:
-//   bar atas  : nama aplikasi, kolom cari, pilihan platform
+//   bar atas  : nama aplikasi, kolom cari (mencari di Pustaka), pilihan platform
 //   kiri      : sidebar navigasi
 //   tengah    : daftar (unduhan / pustaka / antrean) atau pengaturan
-//   kanan     : form "Unduh baru"
+//   kanan     : form "Unduh baru", atau detail file yang dipilih di Pustaka
 //   bawah     : status bar
 //
 // Catatan performa: tidak ada animasi atau timer di sini, jadi saat diam
@@ -12,12 +14,20 @@
 
 import { Theme, Icons } from "theme.slint";
 import {
-    Icon, Panel, NavButton, Chip, PlatformBadge, InputField,
+    Icon, Panel, NavButton, Chip, PlatformBadge, InputField, Checkbox, TextLink,
     PrimaryButton, GhostButton, Segmented, FieldLabel, ValueRow, Dropdown
 } from "components.slint";
 import { DownloadList, DownloadItem, DownloadState } from "downloads.slint";
 import { SettingsPage, ComponentInfo, ComponentState } from "settings-page.slint";
 import { SetupWizard, WizardState } from "setup-wizard.slint";
+import {
+    LibraryPage, LibraryDetailPanel, DeleteDialogView, LibraryRow, LibraryDetail, DeleteDialog
+} from "library.slint";
+import {
+    QueuePage, QueueRow, PlaylistDialogView, PlaylistDialog, PlaylistEntry, ConfirmDialogView,
+    ConfirmDialog
+} from "queue.slint";
+import { ScrollView } from "std-widgets.slint";
 
 // Hasil pengecekan URL terhadap platform yang dipilih. Dihitung di Rust (src/platform.rs).
 export struct UrlFeedback {
@@ -25,10 +35,16 @@ export struct UrlFeedback {
     valid: bool,
     // Pesan di bawah kolom URL (kosong = tidak ada pesan).
     message: string,
+    // Link playlist YouTube: isinya dibaca dulu, lalu pengguna memilih videonya.
+    playlist: bool,
+    // Link satu video yang juga menyebut playlist-nya (`watch?v=...&list=...`).
+    in-playlist: bool,
 }
 
 // Diekspor supaya tipe ini bisa dipakai dari Rust (src/app.rs).
 export { ComponentInfo, ComponentState, WizardState, DownloadItem, DownloadState }
+export { LibraryRow, LibraryDetail, DeleteDialog }
+export { QueueRow, PlaylistDialog, PlaylistEntry, ConfirmDialog }
 
 export component AppWindow inherits Window {
     // Diisi dari Rust (src/main.rs) memakai versi di Cargo.toml.
@@ -46,7 +62,7 @@ export component AppWindow inherits Window {
     in-out property <string> url <=> url-field.text;
 
     // ----- Diisi dari Rust (src/app.rs) -----
-    // Status tiap komponen (yt-dlp, FFmpeg, ffprobe).
+    // Status tiap komponen (yt-dlp, FFmpeg, ffprobe, Deno).
     in property <[ComponentInfo]> components;
     // `true` selama pemeriksaan komponen masih berjalan.
     in property <bool> checking-components;
@@ -56,6 +72,10 @@ export component AppWindow inherits Window {
     in property <string> download-folder;
     // Pesan masalah untuk status bar (kosong = tidak ada masalah).
     in property <string> notice;
+    // Pesan singkat hasil sebuah aksi (mis. "Link sumber disalin."); hilang sendiri setelah
+    // beberapa detik. `status-error`: tampil merah.
+    in property <string> status-message;
+    in property <bool> status-error;
     // Simpan video dan audio di subfolder terpisah.
     in-out property <bool> separate-subfolders;
 
@@ -64,6 +84,8 @@ export component AppWindow inherits Window {
     callback choose-download-folder();
     callback download-mode-changed(index: int);
     callback subfolders-toggled(checked: bool);
+    // Platform di bar atas diganti (keterangan format ikut menyesuaikan).
+    callback platform-changed(index: int);
     // Mengecek apakah `url` berasal dari platform berindeks `platform`.
     // `pure`: hanya menghitung, tidak mengubah apa pun, jadi aman dipakai di binding.
     pure callback check-url(platform: int, url: string) -> UrlFeedback;
@@ -71,28 +93,142 @@ export component AppWindow inherits Window {
     // Dihitung ulang otomatis setiap kali platform atau URL berubah.
     property <UrlFeedback> url-feedback: root.check-url(root.platform, root.url);
 
+    // ----- Nama file -----
+    // Nama yang diketik pengguna (kosong = mengikuti judul video). Dikosongkan Rust
+    // setelah unduhan dimulai.
+    in-out property <string> file-name <=> name-field.text;
+    // Ekstensi file untuk format terpilih, mis. "mp4" (diisi Rust).
+    in property <string> file-extension: "mp4";
+    // Mengecek nama file; hasilnya pesan masalah, atau kosong jika nama boleh dipakai.
+    pure callback check-file-name(name: string, extension: string) -> string;
+    property <string> file-name-error: root.check-file-name(root.file-name, root.file-extension);
+
     // ----- Unduhan -----
     // Daftar unduhan sesi ini, terbaru di atas. Diisi dari Rust.
     in property <[DownloadItem]> downloads;
-    // `true` selama ada unduhan berjalan (Fase 3: satu unduhan sekaligus).
-    in property <bool> downloading;
-    // Pilihan resolusi dan bitrate (labelnya dari Rust, src/formats.rs).
-    in property <[string]> video-quality-options;
-    in property <[string]> audio-bitrate-options;
-    in-out property <int> video-quality-index;
-    in-out property <int> audio-bitrate-index;
+    // Jumlah unduhan yang sedang berjalan, dan batasnya (Pengaturan, 1–3).
+    in property <int> running-count;
+    in property <int> max-parallel: 3;
+    // `true` jika ada unduhan Instagram berjalan (Instagram hanya satu per waktu).
+    in property <bool> instagram-running;
+    // Pilihan format dan kualitas untuk mode yang aktif. Isi, label, dan indeksnya diatur
+    // Rust (src/app.rs, src/formats.rs) setiap kali mode, format, atau kualitas berubah.
+    in property <[string]> format-options;
+    in property <int> format-index;
+    in property <string> quality-title: "RESOLUSI MAKS.";
+    in property <[string]> quality-options;
+    in property <int> quality-index;
+    // `false` jika kualitas format ini tetap (mis. "Lossless" untuk FLAC).
+    in property <bool> quality-enabled: true;
+    // Keterangan format terpilih. `format-hint-warning`: tampil sebagai peringatan (AVI/MPEG).
+    in property <string> format-hint;
+    in property <bool> format-hint-warning;
+    callback format-changed(index: int);
+    callback quality-changed(index: int);
     callback start-download();
     callback cancel-download(id: int);
     callback retry-download(id: int);
     callback show-in-folder(id: int);
-    callback video-quality-changed(index: int);
-    callback audio-bitrate-changed(index: int);
+    // Menghentikan semua unduhan yang berjalan dan mengosongkan antrean (setelah konfirmasi).
+    callback cancel-all();
 
-    // Tombol Unduh aktif hanya jika komponen lengkap, link cocok dengan platform
-    // (dan platformnya sudah didukung, dicek di Rust), dan tidak ada unduhan berjalan.
-    property <bool> can-download: root.components-ready && root.url-feedback.valid && !root.downloading;
-    // Alasan tombol Unduh belum aktif (kosong jika tidak perlu penjelasan).
-    property <string> download-hint: root.downloading ? "Tunggu unduhan yang sedang berjalan selesai." : root.checking-components ? "Memeriksa komponen..." : !root.components-ready ? "Komponen belum lengkap. Buka Pengaturan untuk memasangnya." : root.url == "" ? "Tempel link " + root.platforms[root.platform].name + " untuk mulai." : "";
+    // ----- Antrean dan playlist (sejak Fase 7; ditangani di Rust: src/app.rs) -----
+    in property <[QueueRow]> queue-rows;
+    in property <int> waiting-count;
+    in property <bool> queue-paused;
+    callback queue-toggle-pause();
+    callback queue-remove(id: int);
+    callback queue-clear();
+    // Link video+playlist: centang "Unduh seluruh playlist" (bawaan: videonya saja).
+    in-out property <bool> whole-playlist;
+    in property <PlaylistDialog> playlist-dialog;
+    in property <[PlaylistEntry]> playlist-entries;
+    callback playlist-toggled(index: int);
+    callback playlist-check-all();
+    callback playlist-clear-checks();
+    callback playlist-confirm();
+    callback playlist-cancel();
+    in property <ConfirmDialog> confirm-dialog;
+    callback confirm-accepted();
+    callback confirm-dismissed();
+    // Unduhan bersamaan di Pengaturan: 0 = 1 unduhan, 1 = 2, 2 = 3.
+    in property <int> parallel-index: 2;
+    callback parallel-changed(index: int);
+
+    // Link yang akan dibaca sebagai playlist (bukan diunduh langsung).
+    property <bool> playlist-mode: root.url-feedback.playlist || (root.url-feedback.in-playlist && root.whole-playlist);
+
+    // Pilihan "seluruh playlist" berlaku untuk link yang sedang diisi saja.
+    changed url => {
+        root.whole-playlist = false;
+    }
+
+    // Tombol Unduh aktif hanya jika komponen lengkap, link cocok dengan platform (dicek di Rust),
+    // dan nama file benar. Sejak Fase 7 tombolnya tetap aktif saat ada unduhan berjalan:
+    // unduhan baru masuk antrean jika slot penuh.
+    property <bool> can-download: root.components-ready && root.url-feedback.valid && (root.playlist-mode || root.file-name-error == "") && !root.playlist-dialog.visible;
+    // Alasan tombol Unduh belum aktif, atau ke mana unduhan baru akan masuk.
+    property <string> download-hint: root.checking-components ? "Memeriksa komponen..." : !root.components-ready ? "Komponen belum lengkap. Buka Pengaturan untuk memasangnya." : root.url == "" ? "Tempel link " + root.platforms[root.platform].name + " untuk mulai." : !root.url-feedback.valid ? "" : !root.playlist-mode && root.file-name-error != "" ? "Perbaiki nama file dulu." : root.queue-paused ? "Antrean dijeda: unduhan baru akan menunggu." : root.running-count >= root.max-parallel ? "Slot penuh: unduhan baru masuk Antrean dulu." : root.platform == 2 && root.instagram-running ? "Instagram satu per satu: unduhan ini menunggu." : "";
+
+    // ----- Pustaka (ditangani di Rust: src/app.rs, src/library.rs) -----
+    // Baris yang tampil (sudah dicari, disaring, dan diurutkan).
+    in property <[LibraryRow]> library-rows;
+    // Jumlah semua file di Pustaka, dan teks jumlah di samping judul (mis. "3 dari 12 file").
+    in property <int> library-total;
+    in property <string> library-count;
+    // Filter jenis (0 = semua, 1 = video, 2 = audio), platform (0 = semua, 1 = YouTube,
+    // 2 = Facebook, 3 = Instagram), dan urutan (indeks ke `library-sort-options`).
+    in property <int> library-kind;
+    in property <int> library-platform;
+    in property <int> library-sort;
+    in property <int> library-checked;
+    // File yang dipilih: detailnya tampil di panel kanan menggantikan form unduh.
+    in property <bool> library-has-selection;
+    in property <LibraryDetail> library-detail;
+    in-out property <bool> library-renaming;
+    // `true` selama file dipindah ke Recycle Bin.
+    in property <bool> library-busy;
+    in property <DeleteDialog> delete-dialog;
+    // Teks di kolom cari bar atas.
+    in-out property <string> search-text <=> search-field.text;
+    callback library-opened();
+    callback library-search-changed(text: string);
+    callback library-filter-changed(kind: int, platform: int);
+    callback library-sort-changed(index: int);
+    callback library-row-clicked(index: int);
+    callback library-row-toggled(index: int);
+    callback library-check-all();
+    callback library-clear-checks();
+    callback library-delete-checked();
+    callback library-close-detail();
+    callback library-open();
+    callback library-show-in-folder();
+    pure callback library-check-rename(name: string) -> string;
+    callback library-rename(name: string);
+    callback library-copied();
+    callback library-redownload();
+    callback library-delete-selected();
+    callback library-confirm-delete(recycle: bool);
+    callback library-cancel-delete();
+
+    // Pilihan menu "Urutkan" (diisi Rust dari src/library.rs).
+    in property <[string]> library-sort-options;
+    property <bool> show-library-detail: root.current-page == 1 && root.library-has-selection;
+
+    // Membuka Pustaka: Rust memeriksa lagi file mana yang sudah hilang.
+    changed current-page => {
+        if root.current-page == 1 {
+            root.library-opened();
+        }
+    }
+
+    // Mengetik di kolom cari langsung membuka Pustaka.
+    changed search-text => {
+        if root.search-text != "" {
+            root.current-page = 1;
+        }
+        root.library-search-changed(root.search-text);
+    }
 
     property <[{ title: string, empty-title: string, empty-hint: string, icon: string }]> pages: [
         {
@@ -170,13 +306,14 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Kolom cari (akan mencari di Pustaka mulai Fase 6)
-            InputField {
+            // Kolom cari: mencari nama file dan judul di Pustaka.
+            search-field := InputField {
                 horizontal-stretch: 1;
                 height: 40px;
                 border-radius: 20px;
                 icon: Icons.search;
                 placeholder: "Cari file unduhan...";
+                clearable: true;
             }
 
             // Pilihan platform sumber unduhan
@@ -194,6 +331,7 @@ export component AppWindow inherits Window {
                         active: root.platform == index;
                         clicked => {
                             root.platform = index;
+                            root.platform-changed(index);
                         }
                     }
                 }
@@ -235,6 +373,7 @@ export component AppWindow inherits Window {
                     NavButton {
                         icon: Icons.queue;
                         label: "Antrean";
+                        badge: root.waiting-count > 99 ? "99+" : root.waiting-count > 0 ? "" + root.waiting-count : "";
                         active: root.current-page == 2;
                         clicked => {
                             root.current-page = 2;
@@ -266,15 +405,51 @@ export component AppWindow inherits Window {
                     padding: 20px;
                     spacing: 16px;
 
-                    Text {
-                        text: root.pages[root.current-page].title;
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: Theme.text;
+                    HorizontalLayout {
+                        spacing: 12px;
+
+                        Text {
+                            text: root.pages[root.current-page].title;
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                        }
+
+                        if root.current-page == 1: Text {
+                            text: root.library-count;
+                            color: Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+
+                        if root.current-page == 0 && root.running-count > 0: Text {
+                            text: root.running-count + " berjalan";
+                            color: Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+
+                        if root.current-page == 2 && root.waiting-count > 0: Text {
+                            text: root.waiting-count + " menunggu";
+                            color: Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+
+                        if root.current-page == 1 && root.library-total > 0: Dropdown {
+                            width: 168px;
+                            options: root.library-sort-options;
+                            current-index: root.library-sort;
+                            selected(index) => {
+                                root.library-sort-changed(index);
+                            }
+                        }
                     }
 
-                    // Chip filter: hanya untuk halaman berisi daftar file.
-                    if root.current-page != 3: HorizontalLayout {
+                    // Chip filter halaman Unduhan. (Pustaka dan Antrean punya baris atas sendiri.)
+                    if root.current-page == 0: HorizontalLayout {
                         alignment: start;
                         spacing: 8px;
                         for filter[index] in root.filters: Chip {
@@ -290,7 +465,6 @@ export component AppWindow inherits Window {
                     if root.current-page == 0 && root.downloads.length > 0: DownloadList {
                         vertical-stretch: 1;
                         items: root.downloads;
-                        busy: root.downloading;
                         cancel(id) => {
                             root.cancel-download(id);
                         }
@@ -302,6 +476,51 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    if root.current-page == 1: LibraryPage {
+                        vertical-stretch: 1;
+                        rows: root.library-rows;
+                        total: root.library-total;
+                        kind: root.library-kind;
+                        platform: root.library-platform;
+                        checked-count: root.library-checked;
+                        busy: root.library-busy;
+                        filter-changed(kind, platform) => {
+                            root.library-filter-changed(kind, platform);
+                        }
+                        row-clicked(index) => {
+                            root.library-row-clicked(index);
+                        }
+                        row-toggled(index) => {
+                            root.library-row-toggled(index);
+                        }
+                        check-all => {
+                            root.library-check-all();
+                        }
+                        clear-checks => {
+                            root.library-clear-checks();
+                        }
+                        delete-checked => {
+                            root.library-delete-checked();
+                        }
+                    }
+
+                    // Halaman Antrean: unduhan yang menunggu giliran.
+                    if root.current-page == 2: QueuePage {
+                        vertical-stretch: 1;
+                        rows: root.queue-rows;
+                        paused: root.queue-paused;
+                        ready: root.components-ready || root.checking-components;
+                        toggle-pause => {
+                            root.queue-toggle-pause();
+                        }
+                        remove(id) => {
+                            root.queue-remove(id);
+                        }
+                        clear => {
+                            root.queue-clear();
+                        }
+                    }
+
                     if root.current-page == 3: SettingsPage {
                         vertical-stretch: 1;
                         components: root.components;
@@ -309,6 +528,10 @@ export component AppWindow inherits Window {
                         ready: root.components-ready;
                         download-folder: root.download-folder;
                         separate-subfolders <=> root.separate-subfolders;
+                        parallel-index: root.parallel-index;
+                        parallel-changed(index) => {
+                            root.parallel-changed(index);
+                        }
                         recheck-components => {
                             root.recheck-components();
                         }
@@ -324,8 +547,8 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Keadaan kosong (belum ada data)
-                    if root.current-page != 3 && !(root.current-page == 0 && root.downloads.length > 0): Rectangle {
+                    // Keadaan kosong halaman Unduhan. Pustaka dan Antrean punya keadaan kosong sendiri.
+                    if root.current-page == 0 && root.downloads.length == 0: Rectangle {
                         vertical-stretch: 1;
 
                         VerticalLayout {
@@ -366,9 +589,15 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Panel kanan: form unduh baru
+            // Panel kanan: form unduh baru, atau detail file yang dipilih di Pustaka.
             Panel {
                 width: 320px;
+
+                // Form tetap ada saat detail tampil (hanya disembunyikan), supaya isiannya
+                // tidak hilang. Isinya bisa digulir jika tidak muat (jendela pendek, atau pesan
+                // yang panjang), supaya jendela tidak ikut membesar sendiri.
+                ScrollView {
+                    visible: !root.show-library-detail;
 
                 VerticalLayout {
                     padding: 20px;
@@ -410,6 +639,12 @@ export component AppWindow inherits Window {
                             color: root.url-feedback.valid ? Theme.ok : Theme.warning;
                             wrap: word-wrap;
                         }
+
+                        // Link video yang juga menyebut playlist-nya: bawaannya videonya saja.
+                        if root.url-feedback.in-playlist: Checkbox {
+                            text: "Unduh seluruh playlist";
+                            checked <=> root.whole-playlist;
+                        }
                     }
 
                     VerticalLayout {
@@ -428,40 +663,100 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    HorizontalLayout {
+                    VerticalLayout {
                         spacing: 8px;
 
-                        VerticalLayout {
-                            width: (parent.width - 8px) / 2;
-                            spacing: 6px;
-                            FieldLabel {
-                                text: "FORMAT";
-                            }
+                        HorizontalLayout {
+                            spacing: 8px;
 
-                            ValueRow {
-                                text: root.download-mode == 0 ? "MP4" : "MP3";
-                            }
-                        }
+                            // Dua kolom sama lebar (lebar dari stretch, bukan dari lebar induk,
+                            // supaya tidak berputar dengan lebar isi ScrollView).
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                preferred-width: 100px;
+                                spacing: 6px;
+                                FieldLabel {
+                                    text: "FORMAT";
+                                }
 
-                        VerticalLayout {
-                            spacing: 6px;
-                            FieldLabel {
-                                text: root.download-mode == 0 ? "RESOLUSI MAKS." : "BITRATE";
-                            }
-
-                            Dropdown {
-                                options: root.download-mode == 0 ? root.video-quality-options : root.audio-bitrate-options;
-                                current-index: root.download-mode == 0 ? root.video-quality-index : root.audio-bitrate-index;
-                                selected(index) => {
-                                    if root.download-mode == 0 {
-                                        root.video-quality-index = index;
-                                        root.video-quality-changed(index);
-                                    } else {
-                                        root.audio-bitrate-index = index;
-                                        root.audio-bitrate-changed(index);
+                                Dropdown {
+                                    options: root.format-options;
+                                    current-index: root.format-index;
+                                    selected(index) => {
+                                        root.format-changed(index);
                                     }
                                 }
                             }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                preferred-width: 100px;
+                                spacing: 6px;
+                                FieldLabel {
+                                    text: root.quality-title;
+                                }
+
+                                Dropdown {
+                                    options: root.quality-options;
+                                    current-index: root.quality-index;
+                                    enabled: root.quality-enabled;
+                                    selected(index) => {
+                                        root.quality-changed(index);
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.format-hint != "": Text {
+                            text: root.format-hint;
+                            font-size: 11px;
+                            color: root.format-hint-warning ? Theme.warning : Theme.text-dim;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        FieldLabel {
+                            text: "NAMA FILE";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            // Playlist: tiap video memakai judulnya sendiri, jadi nama tidak bisa
+                            // diatur (kolomnya disembunyikan, isiannya tetap disimpan).
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 38px;
+
+                                name-field := InputField {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    visible: !root.playlist-mode;
+                                    placeholder: "Otomatis dari judul video";
+                                }
+
+                                if root.playlist-mode: ValueRow {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text: "Otomatis dari judul tiap video";
+                                }
+                            }
+
+                            // Ekstensi ditambahkan otomatis sesuai format.
+                            Text {
+                                text: "." + root.file-extension;
+                                color: Theme.text-dim;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if !root.playlist-mode && root.file-name-error != "": Text {
+                            text: root.file-name-error;
+                            font-size: 11px;
+                            color: Theme.warning;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -487,7 +782,7 @@ export component AppWindow inherits Window {
                     }
 
                     PrimaryButton {
-                        text: root.downloading ? "Sedang mengunduh..." : "Unduh";
+                        text: "Unduh";
                         enabled: root.can-download;
                         clicked => {
                             root.start-download();
@@ -499,6 +794,37 @@ export component AppWindow inherits Window {
                         font-size: 11px;
                         color: Theme.text-dim;
                         wrap: word-wrap;
+                    }
+                }
+                }
+
+                if root.show-library-detail: LibraryDetailPanel {
+                    detail: root.library-detail;
+                    busy: root.library-busy;
+                    renaming <=> root.library-renaming;
+                    check-rename(name) => {
+                        return root.library-check-rename(name);
+                    }
+                    close => {
+                        root.library-close-detail();
+                    }
+                    open-file => {
+                        root.library-open();
+                    }
+                    show-in-folder => {
+                        root.library-show-in-folder();
+                    }
+                    rename(name) => {
+                        root.library-rename(name);
+                    }
+                    copied => {
+                        root.library-copied();
+                    }
+                    redownload => {
+                        root.library-redownload();
+                    }
+                    delete => {
+                        root.library-delete-selected();
                     }
                 }
             }
@@ -513,18 +839,26 @@ export component AppWindow inherits Window {
 
             Text {
                 horizontal-stretch: 1;
-                text: root.notice != "" ? root.notice : root.checking-components ? "Memeriksa komponen..." : root.components-ready ? "Siap." : "Komponen belum lengkap. Buka Pengaturan untuk melihat detailnya.";
+                text: root.notice != "" ? root.notice : root.status-message != "" ? root.status-message : root.checking-components ? "Memeriksa komponen..." : root.components-ready ? "Siap." : "Komponen belum lengkap. Buka Pengaturan untuk melihat detailnya.";
                 font-size: 12px;
-                color: root.notice != "" ? Theme.error : root.checking-components || root.components-ready ? Theme.text-muted : Theme.warning;
+                color: root.notice != "" ? Theme.error : root.status-message != "" ? (root.status-error ? Theme.error : Theme.ok) : root.checking-components || root.components-ready ? Theme.text-muted : Theme.warning;
                 vertical-alignment: center;
                 overflow: elide;
             }
 
             Text {
-                text: root.downloading ? "1 unduhan berjalan" : "Tidak ada unduhan aktif";
+                text: root.running-count == 0 && root.waiting-count == 0 ? "Tidak ada unduhan aktif" : root.running-count + " berjalan · " + root.waiting-count + " menunggu" + (root.queue-paused ? " (dijeda)" : "");
                 font-size: 12px;
-                color: root.downloading ? Theme.info : Theme.text-dim;
+                color: root.running-count > 0 ? Theme.info : root.waiting-count > 0 ? Theme.text-muted : Theme.text-dim;
                 vertical-alignment: center;
+            }
+
+            if root.running-count > 0 || root.waiting-count > 0: TextLink {
+                text: "Batal semua";
+                danger: true;
+                clicked => {
+                    root.cancel-all();
+                }
             }
 
             Text {
@@ -533,6 +867,55 @@ export component AppWindow inherits Window {
                 color: Theme.text-dim;
                 vertical-alignment: center;
             }
+        }
+    }
+
+    // Konfirmasi hapus dari Pustaka: lapisan di atas seluruh jendela.
+    if root.delete-dialog.visible: DeleteDialogView {
+        width: 100%;
+        height: 100%;
+        dialog: root.delete-dialog;
+        confirm(recycle) => {
+            root.library-confirm-delete(recycle);
+        }
+        cancel => {
+            root.library-cancel-delete();
+        }
+    }
+
+    // Pilih video dari playlist: lapisan di atas seluruh jendela.
+    if root.playlist-dialog.visible: PlaylistDialogView {
+        width: 100%;
+        height: 100%;
+        dialog: root.playlist-dialog;
+        entries: root.playlist-entries;
+        toggled(index) => {
+            root.playlist-toggled(index);
+        }
+        check-all => {
+            root.playlist-check-all();
+        }
+        clear-checks => {
+            root.playlist-clear-checks();
+        }
+        confirm => {
+            root.playlist-confirm();
+        }
+        cancel => {
+            root.playlist-cancel();
+        }
+    }
+
+    // Konfirmasi "Batal semua" dan "Kosongkan antrean".
+    if root.confirm-dialog.visible: ConfirmDialogView {
+        width: 100%;
+        height: 100%;
+        dialog: root.confirm-dialog;
+        confirm => {
+            root.confirm-accepted();
+        }
+        cancel => {
+            root.confirm-dismissed();
         }
     }
 

@@ -29,6 +29,8 @@ export component NavButton inherits Rectangle {
     in property <bool> active;
     // Menampilkan titik kecil sebagai tanda ada yang perlu diperhatikan.
     in property <bool> alert;
+    // Angka kecil di pojok, mis. jumlah unduhan di Antrean (kosong = tidak tampil).
+    in property <string> badge;
     callback clicked;
 
     height: 58px;
@@ -64,6 +66,24 @@ export component NavButton inherits Rectangle {
         height: 7px;
         border-radius: 3.5px;
         background: Theme.warning;
+    }
+
+    if root.badge != "": Rectangle {
+        x: parent.width - self.width - 5px;
+        y: 5px;
+        width: max(17px, badge-text.preferred-width + 9px);
+        height: 17px;
+        border-radius: 8.5px;
+        background: Theme.info;
+
+        badge-text := Text {
+            text: root.badge;
+            font-size: 10px;
+            font-weight: 700;
+            color: Theme.accent-text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
 
     touch := TouchArea {
@@ -208,11 +228,94 @@ export component Checkbox inherits Rectangle {
     }
 }
 
+// Kotak centang kecil tanpa label untuk baris daftar (Pustaka, isi playlist). Mengubah centang
+// diserahkan ke pemanggil lewat `toggled` (nilainya diisi dari Rust).
+export component RowCheck inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    width: 30px;
+    height: 30px;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-label: "Pilih";
+
+    Rectangle {
+        x: 6px;
+        y: 6px;
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: root.checked ? Theme.accent : root.enabled && touch.has-hover ? Theme.text-dim : Theme.border;
+        background: root.checked ? Theme.accent : root.enabled ? Theme.field : Theme.panel-raised;
+
+        if root.checked: Path {
+            width: 12px;
+            height: 12px;
+            x: 3px;
+            y: 3px;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: "M2.5 6.2 L5 8.7 L9.5 3.6";
+            stroke: Theme.accent-text;
+            stroke-width: 1.8px;
+            stroke-line-cap: round;
+            fill: transparent;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+// Teks yang bisa diklik, mis. "Batal semua" di status bar.
+export component TextLink inherits Rectangle {
+    in property <string> text;
+    in property <bool> danger;
+    callback clicked;
+
+    width: label.preferred-width;
+    accessible-role: button;
+    accessible-label: root.text;
+
+    label := Text {
+        text: root.text;
+        font-size: 12px;
+        color: root.danger ? (touch.has-hover ? Theme.error : Theme.error.with-alpha(0.8)) : touch.has-hover ? Theme.text : Theme.text-muted;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 // Kolom isian teks satu baris dengan teks petunjuk (placeholder) dan ikon opsional.
 export component InputField inherits Rectangle {
     in property <string> placeholder;
     in property <string> icon;
     in-out property <string> text <=> input.text;
+    // Menampilkan tombol x untuk mengosongkan isian (mis. kolom cari).
+    in property <bool> clearable;
+
+    // Fokus keyboard diteruskan ke kolom teks di dalamnya (mis. `field.focus()`).
+    forward-focus: input;
+
+    // Memilih seluruh teks (mis. supaya bisa langsung diketik ulang).
+    public function select-all() {
+        input.select-all();
+    }
 
     // Menempelkan isi clipboard, menggantikan teks yang ada.
     public function paste-from-clipboard() {
@@ -279,18 +382,48 @@ export component InputField inherits Rectangle {
                 }
             }
         }
+
+        if root.clearable && input.text != "": VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
+                background: clear-touch.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: "Kosongkan";
+
+                Icon {
+                    width: 14px;
+                    height: 14px;
+                    commands: Icons.close;
+                    tint: Theme.text-dim;
+                }
+
+                clear-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        input.text = "";
+                        input.focus();
+                    }
+                }
+            }
+        }
     }
 }
 
-// Tombol utama (warna aksen).
+// Tombol utama (warna aksen). `danger`: merah, untuk aksi yang menghapus sesuatu.
 export component PrimaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
+    in property <bool> danger;
     callback clicked;
+
+    property <color> base: root.danger ? Theme.error : Theme.accent;
 
     height: 42px;
     border-radius: Theme.radius-small;
-    background: !root.enabled ? Theme.panel-raised : touch.has-hover ? Theme.accent.darker(8%) : Theme.accent;
+    background: !root.enabled ? Theme.panel-raised : touch.has-hover ? root.base.darker(8%) : root.base;
     accessible-role: button;
     accessible-label: root.text;
     accessible-enabled: root.enabled;
@@ -299,7 +432,7 @@ export component PrimaryButton inherits Rectangle {
         text: root.text;
         font-size: 13px;
         font-weight: 600;
-        color: root.enabled ? Theme.accent-text : Theme.text-dim;
+        color: !root.enabled ? Theme.text-dim : root.danger ? #ffffff : Theme.accent-text;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -313,16 +446,17 @@ export component PrimaryButton inherits Rectangle {
     }
 }
 
-// Tombol sekunder (garis tepi saja).
+// Tombol sekunder (garis tepi saja). `danger`: teks merah, untuk aksi yang menghapus sesuatu.
 export component GhostButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
+    in property <bool> danger;
     callback clicked;
 
     height: 38px;
     border-radius: Theme.radius-small;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.danger && root.enabled ? Theme.error.with-alpha(0.45) : Theme.border;
     background: root.enabled && touch.has-hover ? Theme.hover : transparent;
     accessible-role: button;
     accessible-label: root.text;
@@ -334,7 +468,7 @@ export component GhostButton inherits Rectangle {
         Text {
             text: root.text;
             font-size: 12px;
-            color: root.enabled ? Theme.text : Theme.text-dim;
+            color: !root.enabled ? Theme.text-dim : root.danger ? Theme.error : Theme.text;
             vertical-alignment: center;
             horizontal-alignment: center;
         }

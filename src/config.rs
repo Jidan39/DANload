@@ -6,9 +6,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::formats::DEFAULT_AUDIO_BITRATE;
+use crate::formats::{
+    AUDIO_BITRATES, AudioFormat, DEFAULT_AUDIO_BITRATE, OutputFormat, VIDEO_HEIGHTS, VideoFormat,
+};
 
 /// Nama folder data aplikasi di dalam `%APPDATA%` dan `%LOCALAPPDATA%`.
 pub const APP_DIR_NAME: &str = "DANload";
@@ -52,15 +55,49 @@ pub struct Config {
     /// dan aplikasi memakai [`default_download_folder`].
     pub download_folder: Option<PathBuf>,
     /// Mode unduh terakhir (Video/Audio).
+    #[serde(deserialize_with = "or_default")]
     pub download_mode: DownloadMode,
     /// `true` setelah wizard setup awal selesai.
     pub setup_completed: bool,
     /// Simpan video dan audio di subfolder terpisah (`Video\` dan `Audio\`).
     pub separate_subfolders: bool,
+    /// Format video terakhir (MP4, MKV, ...).
+    #[serde(deserialize_with = "or_default")]
+    pub video_format: VideoFormat,
+    /// Format audio terakhir (MP3, M4A, ...).
+    #[serde(deserialize_with = "or_default")]
+    pub audio_format: AudioFormat,
     /// Resolusi maksimum video terakhir (mis. 1080). `None` = terbaik.
     pub video_max_height: Option<u32>,
-    /// Bitrate MP3 terakhir (kbps).
+    /// Bitrate audio terakhir (kbps), untuk format yang bitrate-nya bisa dipilih (MP3, OGG).
     pub audio_bitrate_kbps: u32,
+    /// Jumlah unduhan yang boleh berjalan bersamaan (1–3, sejak Fase 7). Pakai
+    /// [`Config::parallel_downloads`] supaya nilainya selalu dalam batas.
+    #[serde(deserialize_with = "or_default_parallel")]
+    pub max_parallel_downloads: u32,
+}
+
+/// Batas jumlah unduhan bersamaan yang bisa dipilih di Pengaturan.
+pub const MAX_PARALLEL_DOWNLOADS: u32 = 3;
+
+/// Membaca satu kolom pilihan. Nilai yang tidak dikenal (mis. format dari versi DANload yang
+/// lebih baru) diganti nilai bawaan, supaya kolom lain di config tetap terbaca.
+pub(crate) fn or_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(T::deserialize(value).unwrap_or_default())
+}
+
+/// Seperti [`or_default`], tetapi nilai bawaannya [`MAX_PARALLEL_DOWNLOADS`] (bukan 0).
+fn or_default_parallel<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(u32::deserialize(value).unwrap_or(MAX_PARALLEL_DOWNLOADS))
 }
 
 impl Default for Config {
@@ -70,8 +107,11 @@ impl Default for Config {
             download_mode: DownloadMode::default(),
             setup_completed: false,
             separate_subfolders: false,
+            video_format: VideoFormat::default(),
+            audio_format: AudioFormat::default(),
             video_max_height: None,
             audio_bitrate_kbps: DEFAULT_AUDIO_BITRATE,
+            max_parallel_downloads: MAX_PARALLEL_DOWNLOADS,
         }
     }
 }
@@ -102,11 +142,36 @@ impl Config {
         fs::rename(&temp_path, path)
     }
 
+    /// Jumlah unduhan yang boleh berjalan bersamaan, selalu 1 sampai
+    /// [`MAX_PARALLEL_DOWNLOADS`] (nilai di luar itu, mis. config diubah manual, dibatasi).
+    pub fn parallel_downloads(&self) -> usize {
+        self.max_parallel_downloads.clamp(1, MAX_PARALLEL_DOWNLOADS) as usize
+    }
+
     /// Folder unduhan yang berlaku: pilihan pengguna, atau folder bawaan.
     pub fn effective_download_folder(&self) -> PathBuf {
         self.download_folder
             .clone()
             .unwrap_or_else(default_download_folder)
+    }
+
+    /// Format dan kualitas terakhir untuk `mode`. Nilai yang tidak ada di menu (mis. config
+    /// diubah manual) diganti nilai bawaan, supaya yang diunduh sama dengan yang tampil di menu.
+    pub fn output_format(&self, mode: DownloadMode) -> OutputFormat {
+        match mode {
+            DownloadMode::Video => OutputFormat::Video {
+                format: self.video_format,
+                max_height: self
+                    .video_max_height
+                    .filter(|height| VIDEO_HEIGHTS.contains(&Some(*height))),
+            },
+            DownloadMode::Audio => OutputFormat::Audio {
+                format: self.audio_format,
+                bitrate_kbps: Some(self.audio_bitrate_kbps)
+                    .filter(|kbps| AUDIO_BITRATES.contains(kbps))
+                    .unwrap_or(DEFAULT_AUDIO_BITRATE),
+            },
+        }
     }
 
     /// Folder tujuan untuk satu unduhan: folder unduhan, ditambah subfolder `Video`
@@ -126,6 +191,16 @@ impl Config {
 /// Lokasi `config.json`: `%APPDATA%\DANload\config.json`.
 pub fn config_file_path() -> PathBuf {
     roaming_data_dir().join(APP_DIR_NAME).join("config.json")
+}
+
+/// Lokasi antrean unduhan: `%APPDATA%\DANload\queue.json` (di sebelah `config.json`).
+pub fn queue_file_path() -> PathBuf {
+    roaming_data_dir().join(APP_DIR_NAME).join("queue.json")
+}
+
+/// Lokasi data Pustaka: `%APPDATA%\DANload\library.json` (di sebelah `config.json`).
+pub fn library_file_path() -> PathBuf {
+    roaming_data_dir().join(APP_DIR_NAME).join("library.json")
 }
 
 /// Folder unduhan bawaan: `%USERPROFILE%\Downloads\DANload`.
@@ -185,10 +260,17 @@ mod tests {
             download_mode: DownloadMode::Audio,
             setup_completed: true,
             separate_subfolders: true,
+            video_format: VideoFormat::Mpeg,
+            audio_format: AudioFormat::Flac,
             video_max_height: Some(720),
             audio_bitrate_kbps: 320,
+            max_parallel_downloads: 2,
         };
         config.save_to(&path).unwrap();
+        // Nilai enum disimpan sebagai teks yang mudah dibaca.
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""video_format": "mpeg""#), "{text}");
+        assert!(text.contains(r#""audio_format": "flac""#), "{text}");
         assert_eq!(Config::load_from(&path), config);
         assert!(!path.with_extension("json.tmp").exists());
     }
@@ -241,6 +323,91 @@ mod tests {
         assert!(config.setup_completed);
         assert_eq!(config.video_max_height, None);
         assert_eq!(config.audio_bitrate_kbps, DEFAULT_AUDIO_BITRATE);
+        // Config dari Fase 3 belum punya kolom format: MP4 dan MP3 seperti sebelumnya.
+        assert_eq!(config.video_format, VideoFormat::Mp4);
+        assert_eq!(config.audio_format, AudioFormat::Mp3);
+        // Config sebelum Fase 7: 3 unduhan bersamaan.
+        assert_eq!(config.parallel_downloads(), 3);
+    }
+
+    #[test]
+    fn parallel_downloads_stay_within_limits() {
+        let mut config = Config::default();
+        for (stored, used) in [(0, 1), (1, 1), (2, 2), (3, 3), (99, 3)] {
+            config.max_parallel_downloads = stored;
+            assert_eq!(config.parallel_downloads(), used, "{stored}");
+        }
+        // Nilai yang salah jenis tidak mengulang pengaturan lain.
+        let dir = temp_dir("bersamaan");
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            r#"{ "setup_completed": true, "max_parallel_downloads": "banyak" }"#,
+        )
+        .unwrap();
+        let config = Config::load_from(&path);
+        assert!(config.setup_completed);
+        assert_eq!(config.parallel_downloads(), 3);
+    }
+
+    #[test]
+    fn unknown_choice_does_not_reset_other_settings() {
+        let dir = temp_dir("pilihan-asing");
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            r#"{ "download_folder": "E:\\Unduhan", "setup_completed": true,
+                 "download_mode": "playlist", "video_format": "hevc", "audio_format": 7 }"#,
+        )
+        .unwrap();
+        let config = Config::load_from(&path);
+        assert!(config.setup_completed);
+        assert_eq!(config.download_folder, Some(PathBuf::from("E:\\Unduhan")));
+        assert_eq!(config.download_mode, DownloadMode::Video);
+        assert_eq!(config.video_format, VideoFormat::Mp4);
+        assert_eq!(config.audio_format, AudioFormat::Mp3);
+    }
+
+    #[test]
+    fn output_format_uses_saved_choices_safely() {
+        let mut config = Config {
+            video_format: VideoFormat::Webm,
+            audio_format: AudioFormat::Ogg,
+            video_max_height: Some(1440),
+            audio_bitrate_kbps: 256,
+            ..Config::default()
+        };
+        assert_eq!(
+            config.output_format(DownloadMode::Video),
+            OutputFormat::Video {
+                format: VideoFormat::Webm,
+                max_height: Some(1440)
+            }
+        );
+        assert_eq!(
+            config.output_format(DownloadMode::Audio),
+            OutputFormat::Audio {
+                format: AudioFormat::Ogg,
+                bitrate_kbps: 256
+            }
+        );
+        // Nilai yang tidak ada di menu tidak dipakai.
+        config.video_max_height = Some(999);
+        config.audio_bitrate_kbps = 100;
+        assert_eq!(
+            config.output_format(DownloadMode::Video),
+            OutputFormat::Video {
+                format: VideoFormat::Webm,
+                max_height: None
+            }
+        );
+        assert_eq!(
+            config.output_format(DownloadMode::Audio),
+            OutputFormat::Audio {
+                format: AudioFormat::Ogg,
+                bitrate_kbps: DEFAULT_AUDIO_BITRATE
+            }
+        );
     }
 
     #[test]

@@ -30,6 +30,19 @@ ureq = { version = "3.5", default-features = false, features = ["rustls", "platf
 sha2 = "0.11"
 zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+# Khusus Windows: fungsi Windows yang dipanggil langsung di src/system.rs (Recycle Bin, buka file
+# dengan aplikasi bawaan, jam lokal). Crate resmi Microsoft yang hanya berisi deklarasi API
+# Windows; versinya sama dengan yang sudah dipakai rfd, arboard, dan zip, jadi tidak ada crate
+# baru yang ikut diunduh.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Time",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [build-dependencies]
 # Mengompilasi file .slint menjadi kode Rust saat build.
 slint-build = "1.18"
